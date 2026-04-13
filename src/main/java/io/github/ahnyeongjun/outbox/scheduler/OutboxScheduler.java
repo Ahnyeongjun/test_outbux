@@ -5,11 +5,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
 import io.github.ahnyeongjun.outbox.repository.OutboxRepository;
 import io.github.ahnyeongjun.outbox.writer.OutboxFileWriter;
@@ -17,20 +17,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Outbox ???�일 변??배치.
- * ?�간 ?�리�?OR 건수 ?�리�?�?먼�? 충족?�는 조건?�로 ?�행.
+ * Outbox 파일 변환 배치.
+ * 시간 트리거 OR 건수 트리거 중 먼저 충족되는 조건으로 실행.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class OutboxScheduler {
 
-    @Value("${outbox.batch.size:1000}")
-    private int batchSize;
-
-    @Value("${outbox.batch.time-trigger-ms:60000}")
-    private long timeTriggerMs;
-
+    private final OutboxProperties properties;
     private final OutboxRepository outboxRepository;
     private final OutboxFileWriter outboxFileWriter;
 
@@ -40,12 +35,13 @@ public class OutboxScheduler {
     @Transactional
     public void processOutbox() {
         long pending = outboxRepository.countPending();
-        boolean timeTriggered = Duration.between(lastFlush.get(), Instant.now()).toMillis() >= timeTriggerMs;
-        boolean sizeTriggered = pending >= batchSize;
+        boolean timeTriggered = Duration.between(lastFlush.get(), Instant.now()).toMillis()
+                >= properties.getBatch().getTimeTriggerMs();
+        boolean sizeTriggered = pending >= properties.getBatch().getSize();
 
         if (!timeTriggered && !sizeTriggered) return;
 
-        List<Outbox> batch = outboxRepository.findPendingWithLock(batchSize);
+        List<Outbox> batch = outboxRepository.findPendingWithLock(properties.getBatch().getSize());
         if (batch.isEmpty()) { lastFlush.set(Instant.now()); return; }
 
         try {
@@ -59,7 +55,7 @@ public class OutboxScheduler {
         }
     }
 
-    /** SENT 7??????�� */
+    /** SENT 7??????�� */
     @Scheduled(cron = "0 0 2 * * *")
     @Transactional
     public void cleanUpSent() {
