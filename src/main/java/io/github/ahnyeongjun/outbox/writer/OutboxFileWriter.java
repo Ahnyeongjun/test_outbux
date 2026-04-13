@@ -11,20 +11,20 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.zip.GZIPOutputStream;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Outbox 배치�?JSON 직렬????gzip ?�축 ?�일�??�??
- * ?�일�? sync_{seqFrom}_{seqTo}_{timestamp}.json.gz
+ * Outbox 배치를 JSON 직렬화 후 gzip 압축 파일로 저장.
+ * 파일명: sync_{seqFrom}_{seqTo}_{timestamp}.json.gz
  */
 @Slf4j
 @Component
@@ -34,9 +34,7 @@ public class OutboxFileWriter {
     private static final DateTimeFormatter TS_FMT =
             DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
 
-    @Value("${outbox.file.path}")
-    private String outboxFilePath;
-
+    private final OutboxProperties properties;
     private final ObjectMapper objectMapper;
 
     public String write(List<Outbox> batch) {
@@ -45,7 +43,7 @@ public class OutboxFileWriter {
         String fileName = String.format("sync_%d_%d_%s.json.gz",
                 seqFrom, seqTo, TS_FMT.format(Instant.now()));
 
-        Path dir      = Paths.get(outboxFilePath);
+        Path dir      = Paths.get(properties.getFile().getPath());
         Path filePath = dir.resolve(fileName);
 
         try {
