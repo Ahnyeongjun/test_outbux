@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.ahnyeongjun.outbox.mapper.OutboxMapper">
+
+    <resultMap id="resultMap" type="io.github.ahnyeongjun.outbox.model.Outbox" autoMapping="true">
+        <id property="id" column="id"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="io.github.ahnyeongjun.outbox.model.Outbox"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO outbox (seq, domain, event_type, source, payload, status, created_at)
+        VALUES (
+            NEXTVAL('outbox_seq_seq'),
+            #{domain}, #{eventType}, #{source},
+            #{payload}::jsonb, 'PENDING', NOW()
+        )
+    </insert>
+
+    <!-- ?¼ê´„ ?€?? beforeCommit() ?ì„œ ?¸ì¶œ -->
+    <insert id="batchInsert" parameterType="java.util.List">
+        INSERT INTO outbox (seq, domain, event_type, source, payload, status, created_at)
+        VALUES
+        <foreach item="o" collection="list" separator=",">
+        (
+            NEXTVAL('outbox_seq_seq'),
+            #{o.domain}, #{o.eventType}, #{o.source},
+            #{o.payload}::jsonb, 'PENDING', NOW()
+        )
+        </foreach>
+    </insert>
+
+    <select id="countPending" resultType="long">
+        SELECT COUNT(0) FROM outbox WHERE status = 'PENDING'
+    </select>
+
+    <select id="findPendingWithLock" resultMap="resultMap">
+        SELECT id, seq, domain, event_type, source,
+               payload::text AS payload, status, created_at, sent_at
+        FROM outbox
+        WHERE status = 'PENDING'
+        ORDER BY seq ASC
+        LIMIT #{limit}
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <update id="markSent">
+        UPDATE outbox SET status = 'SENT', sent_at = NOW()
+        WHERE id IN
+        <foreach item="id" collection="ids" open="(" separator="," close=")">#{id}</foreach>
+    </update>
+
+    <update id="markFailed">
+        UPDATE outbox SET status = 'FAILED' WHERE id = #{id}
+    </update>
+
+    <delete id="deleteOldSent">
+        DELETE FROM outbox
+        WHERE status = 'SENT'
+          AND sent_at &lt; NOW() - INTERVAL '7 days'
+    </delete>
+
+</mapper>

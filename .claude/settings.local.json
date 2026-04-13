@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(sc:implement)",
+      "Bash(xargs grep:*)",
+      "Bash(powershell:*)"
+    ]
+  }
+}
