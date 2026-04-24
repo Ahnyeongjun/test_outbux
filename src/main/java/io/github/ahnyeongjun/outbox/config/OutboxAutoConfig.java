@@ -27,20 +27,20 @@ import io.github.ahnyeongjun.outbox.repository.OutboxRepository;
 @MapperScan("io.github.ahnyeongjun.outbox.mapper")
 public class OutboxAutoConfig {
 
-    /** @OutboxDomain(enabled=false) opt-out 처리 ?�용 */
+    /** @OutboxDomain(enabled=false) opt-out 처리 담당 */
     @Bean
     public OutboxAspect outboxAspect() {
         return new OutboxAspect();
     }
 
-    /** ?�메???�용 컨버???�을 ???�백. 민감 ?�드 ?�동 ?�외. */
+    /** 도메인 전용 컨버터가 없을 때 폴백. 민감 필드 자동 제외. */
     @Bean("defaultOutboxConverter")
     @ConditionalOnMissingBean(name = "defaultOutboxConverter")
     public OutboxConverter defaultOutboxConverter(ObjectMapper objectMapper) {
         return new DefaultOutboxConverter(objectMapper);
     }
 
-    /** MyBatis Plugin ?�록 ??outbox.tables 목록 기반 ?�동 감�? */
+    /** MyBatis Plugin 등록 — outbox.tables 목록 기반 자동 감지 */
     @Bean
     public OutboxInterceptor outboxInterceptor(OutboxProperties properties,
                                                Map<String, OutboxConverter> converters,
