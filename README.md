@@ -215,6 +215,48 @@ Mapper 클래스명에서 테이블명을 CamelCase → snake_case 변환으로 
 
 ---
 
+## 핵심 구현 상세
+
+### TransactionSynchronization — 트랜잭션 원자성 보장
+
+`OutboxInterceptor`는 MyBatis DML을 감지하면 즉시 DB에 쓰지 않고, Spring의 `TransactionSynchronization`을 등록합니다.
+
+```
+비즈니스 로직 실행
+  └─ DML 감지 → 이벤트를 ThreadLocal(OutboxContextData)에 적재
+       └─ beforeCommit() 호출 → outbox 테이블에 batchInsert
+            └─ 비즈니스 트랜잭션 커밋 ─────────────────────────┐
+                                                               ↓
+                                               비즈니스 데이터 + outbox 동시 커밋
+```
+
+`beforeCommit()` 안에서 삽입하기 때문에 비즈니스 데이터와 outbox 레코드가 **하나의 트랜잭션**으로 커밋됩니다. 비즈니스 롤백 시 outbox도 함께 롤백됩니다.
+
+트랜잭션 외부(`@Transactional` 없는 환경)에서는 DML 직후 즉시 flush합니다.
+
+---
+
+### FOR UPDATE SKIP LOCKED — 다중 인스턴스 배치 중복 방지
+
+`OutboxScheduler`가 처리할 행을 조회할 때 사용하는 잠금 전략입니다.
+
+```sql
+SELECT ... FROM outbox
+WHERE status = 'PENDING'
+ORDER BY seq ASC
+LIMIT #{limit}
+FOR UPDATE SKIP LOCKED   -- 다른 인스턴스가 잠근 행은 건너뜀
+```
+
+| 전략 | 동작 |
+|------|------|
+| `FOR UPDATE` | 잠긴 행 앞에서 대기 → 동일 배치 중복 처리 위험 |
+| `FOR UPDATE SKIP LOCKED` | 잠긴 행을 건너뛰고 다음 행 처리 → 인스턴스 간 자동 분산 |
+
+애플리케이션 인스턴스를 여러 개 띄워도 각 인스턴스가 겹치지 않는 배치를 가져가므로 별도 분산 락 없이 수평 확장이 가능합니다.
+
+---
+
 ## Outbox 상태
 
 | 상태 | 설명 |
