@@ -1,7 +1,6 @@
 package io.github.ahnyeongjun.outbox.interceptor;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.ibatis.executor.Executor;
@@ -29,8 +28,8 @@ import lombok.extern.slf4j.Slf4j;
  * <p>mapper namespace → 테이블명 → outbox.tables 포함 여부 확인 → 이벤트 캡처
  *
  * <pre>
- * com.example.mapper.UserMapper            → user            → USER
- * com.example.mapper.OrderItemMapper       → order_item      → ORDER_ITEM
+ * com.example.mapper.UserMapper            → user             → USER
+ * com.example.mapper.OrderItemMapper       → order_item       → ORDER_ITEM
  * com.example.mapper.ProductCategoryMapper → product_category → PRODUCT_CATEGORY
  * </pre>
  */
@@ -48,7 +47,7 @@ public class OutboxInterceptor implements Interceptor {
     private final Map<String, OutboxConverter> converters;
     private final OutboxRepository outboxRepository;
 
-    /** mapper namespace ???�이블명 캐시 */
+    /** mapper namespace → 테이블명 캐시 */
     private final Map<String, String> tableNameCache = new ConcurrentHashMap<>();
 
     @Override
@@ -57,10 +56,10 @@ public class OutboxInterceptor implements Interceptor {
 
         MappedStatement ms = (MappedStatement) invocation.getArgs()[0];
 
-        // OutboxMapper ?��? 방�?
+        // OutboxMapper 자기참조 방지
         if (ms.getId().startsWith(OUTBOX_MAPPER_PREFIX)) return result;
 
-        // suppress 모드 (?�쇄�??�신 ?�벤???�용 �?
+        // suppress 모드 (폐쇄망 수신 이벤트 재사용 시)
         if (OutboxContext.isSuppressed()) return result;
 
         SqlCommandType sqlType = ms.getSqlCommandType();
@@ -70,10 +69,10 @@ public class OutboxInterceptor implements Interceptor {
         if (!properties.getTables().contains(tableName)) return result;
 
         String domain    = tableName.toUpperCase();
-        String eventType = toEventType(sqlType);
+        String eventType = resolveEventType(sqlType);
         Object parameter = invocation.getArgs()[1];
 
-        // ?�메???�용 컨버?????�으�?기본 컨버???�백
+        // 도메인 전용 컨버터가 없으면 기본 컨버터 폴백
         String beanName = domain.toLowerCase().replace("_", "") + "OutboxConverter";
         OutboxConverter converter = converters.getOrDefault(beanName,
                 converters.get("defaultOutboxConverter"));
@@ -91,7 +90,7 @@ public class OutboxInterceptor implements Interceptor {
     }
 
     /**
-     * mapper namespace ???�이블명.
+     * mapper namespace → 테이블명.
      * com.example.mapper.ProductCategoryMapper → product_category
      */
     private String resolveTableName(MappedStatement ms) {
@@ -136,7 +135,9 @@ public class OutboxInterceptor implements Interceptor {
         }
     }
 
-    private String toEventType(SqlCommandType type) {
+    private String resolveEventType(SqlCommandType type) {
+        OutboxContextData ctx = OutboxContext.get();
+        if (ctx != null && ctx.hasCustomEventType()) return ctx.getCustomEventType();
         return switch (type) {
             case INSERT -> "CREATED";
             case UPDATE -> "UPDATED";

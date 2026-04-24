@@ -55,7 +55,7 @@ public class OutboxScheduler {
         }
     }
 
-    /** SENT 7??????�� */
+    /** SENT 상태 7일 초과분 삭제 */
     @Scheduled(cron = "0 0 2 * * *")
     @Transactional
     public void cleanUpSent() {

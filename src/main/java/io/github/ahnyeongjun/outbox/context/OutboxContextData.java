@@ -11,8 +11,8 @@ public class OutboxContextData {
 
     private final List<Outbox> pendingEvents = new ArrayList<>();
     private boolean syncRegistered = false;
-    /** ?μ‡„λ§??μ‹  ?μ© ??suppress() λ΅??¤μ • ???Έν„°?‰ν„° μΊ΅μ² μ°¨λ‹¨ */
     private boolean suppressed = false;
+    private String customEventType = null;
 
     public void addEvent(Outbox outbox) {
         pendingEvents.add(outbox);
@@ -24,6 +24,26 @@ public class OutboxContextData {
 
     public void suppress() {
         this.suppressed = true;
+    }
+
+    public void unsuppress() {
+        this.suppressed = false;
+    }
+
+    public void setCustomEventType(String eventType) {
+        this.customEventType = eventType;
+    }
+
+    public void clearCustomEventType() {
+        this.customEventType = null;
+    }
+
+    public boolean hasCustomEventType() {
+        return customEventType != null && !customEventType.isEmpty();
+    }
+
+    public String getCustomEventType() {
+        return customEventType;
     }
 
     public boolean hasPendingEvents() {
