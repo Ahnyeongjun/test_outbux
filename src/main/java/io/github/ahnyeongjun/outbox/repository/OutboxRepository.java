@@ -21,7 +21,7 @@ public class OutboxRepository {
         outboxMapper.insert(outbox);
     }
 
-    /** ?�랜??�� beforeCommit() ?�서 ?�괄 ?�??*/
+    /** 트랜잭션 beforeCommit() 에서 일괄 저장 */
     @Transactional
     public void saveAll(List<Outbox> events) {
         outboxMapper.batchInsert(events);
