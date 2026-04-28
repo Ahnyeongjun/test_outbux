@@ -21,7 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 @Aspect
 public class OutboxAspect {
 
-    @Around("@within(outboxDomain) && execution(* *..service.*Service.*(..))")
+    @Around("@within(outboxDomain)")
     public Object suppressIfDisabled(ProceedingJoinPoint pjp, OutboxDomain outboxDomain) throws Throwable {
         if (!outboxDomain.enabled()) {
             log.debug("Outbox suppressed by @OutboxDomain(enabled=false): {}",
@@ -41,7 +41,7 @@ public class OutboxAspect {
      * enabled=false  → 해당 메서드 실행 중만 suppress (다른 메서드의 이벤트는 유지)
      * eventType      → 인터셉터의 SQL 타입 자동 추론 대신 지정값 사용
      */
-    @Around("@annotation(outboxEvent) && execution(* *..service.*Service.*(..))")
+    @Around("@annotation(outboxEvent)")
     public Object handleOutboxEvent(ProceedingJoinPoint pjp, OutboxEvent outboxEvent) throws Throwable {
         if (!outboxEvent.enabled()) {
             log.debug("Outbox suppressed by @OutboxEvent(enabled=false): {}.{}",
