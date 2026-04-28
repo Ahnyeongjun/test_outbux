@@ -13,6 +13,8 @@ import org.apache.ibatis.plugin.Signature;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import org.springframework.beans.factory.ObjectProvider;
+
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.context.OutboxContext;
 import io.github.ahnyeongjun.outbox.context.OutboxContextData;
@@ -45,7 +47,7 @@ public class OutboxInterceptor implements Interceptor {
 
     private final OutboxProperties properties;
     private final Map<String, OutboxConverter> converters;
-    private final OutboxRepository outboxRepository;
+    private final ObjectProvider<OutboxRepository> outboxRepositoryProvider;
 
     /** mapper namespace → 테이블명 캐시 */
     private final Map<String, String> tableNameCache = new ConcurrentHashMap<>();
@@ -128,7 +130,7 @@ public class OutboxInterceptor implements Interceptor {
     private void flushEvents(OutboxContextData ctx) {
         if (!ctx.hasPendingEvents()) return;
         try {
-            outboxRepository.saveAll(ctx.getPendingEvents());
+            outboxRepositoryProvider.getObject().saveAll(ctx.getPendingEvents());
             log.debug("Outbox flushed {} events", ctx.getPendingEvents().size());
         } catch (Exception e) {
             log.error("Outbox flush failed: {}", e.getMessage(), e);

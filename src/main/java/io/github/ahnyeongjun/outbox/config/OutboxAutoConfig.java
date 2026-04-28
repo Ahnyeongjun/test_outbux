@@ -3,6 +3,7 @@ package io.github.ahnyeongjun.outbox.config;
 import java.util.Map;
 
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -44,7 +45,7 @@ public class OutboxAutoConfig {
     @Bean
     public OutboxInterceptor outboxInterceptor(OutboxProperties properties,
                                                Map<String, OutboxConverter> converters,
-                                               OutboxRepository outboxRepository) {
-        return new OutboxInterceptor(properties, converters, outboxRepository);
+                                               ObjectProvider<OutboxRepository> outboxRepositoryProvider) {
+        return new OutboxInterceptor(properties, converters, outboxRepositoryProvider);
     }
 }

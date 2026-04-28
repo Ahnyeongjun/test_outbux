@@ -5,7 +5,13 @@
 
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>re.kr.inspace.web</groupId>
+    <parent>
+        <groupId>re.kr.inspace.web</groupId>
+        <artifactId>inops</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
     <artifactId>inops-outbox-core</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>jar</packaging>
