@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.dialect;
+package io.github.ahnyeongjun.outbox.adapter.jdbc;
 
 /**
  * Outbox 테이블 SQL 방언 인터페이스.

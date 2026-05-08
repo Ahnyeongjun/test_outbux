@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.dialect;
+package io.github.ahnyeongjun.outbox.adapter.jdbc;
 
 public class PostgreSQLDialect implements OutboxDialect {
 

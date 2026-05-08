@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.context;
+package io.github.ahnyeongjun.outbox.capture;
 
 import java.util.ArrayList;
 import java.util.List;

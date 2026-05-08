@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.writer;
+package io.github.ahnyeongjun.outbox.publish;
 
 import java.io.FileOutputStream;
 import java.io.IOException;

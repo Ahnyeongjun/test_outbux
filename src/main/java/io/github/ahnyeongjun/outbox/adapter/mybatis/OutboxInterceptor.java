@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.interceptor;
+package io.github.ahnyeongjun.outbox.adapter.mybatis;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -11,7 +11,7 @@ import org.apache.ibatis.plugin.Intercepts;
 import org.apache.ibatis.plugin.Invocation;
 import org.apache.ibatis.plugin.Signature;
 
-import io.github.ahnyeongjun.outbox.context.OutboxEventFlusher;
+import io.github.ahnyeongjun.outbox.capture.OutboxEventFlusher;
 import lombok.RequiredArgsConstructor;
 
 /**

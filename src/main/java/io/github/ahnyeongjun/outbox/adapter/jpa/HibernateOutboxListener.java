@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.listener;
+package io.github.ahnyeongjun.outbox.adapter.jpa;
 
 import org.hibernate.event.spi.PostDeleteEvent;
 import org.hibernate.event.spi.PostDeleteEventListener;
@@ -8,7 +8,7 @@ import org.hibernate.event.spi.PostUpdateEvent;
 import org.hibernate.event.spi.PostUpdateEventListener;
 import org.hibernate.persister.entity.EntityPersister;
 
-import io.github.ahnyeongjun.outbox.context.OutboxEventFlusher;
+import io.github.ahnyeongjun.outbox.capture.OutboxEventFlusher;
 import lombok.RequiredArgsConstructor;
 
 /**

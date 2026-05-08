@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.aspect;
+package io.github.ahnyeongjun.outbox.capture;
 
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -6,15 +6,13 @@ import org.aspectj.lang.annotation.Aspect;
 
 import io.github.ahnyeongjun.outbox.annotation.OutboxDomain;
 import io.github.ahnyeongjun.outbox.annotation.OutboxEvent;
-import io.github.ahnyeongjun.outbox.context.OutboxContext;
-import io.github.ahnyeongjun.outbox.context.OutboxContextData;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * {@code @OutboxDomain(enabled = false)} 가 붙은 서비스 클래스의 모든 메서드 호출에서
+ * {@code @OutboxDomain(enabled = false)} 가 붙은 클래스의 모든 메서드에서
  * Outbox 이벤트 캡처를 차단(suppress)한다.
  *
- * <p>테이블 기반 자동 감지는 {@link io.github.ahnyeongjun.outbox.interceptor.OutboxInterceptor}가 담당하며,
+ * <p>테이블 기반 자동 감지는 {@link io.github.ahnyeongjun.outbox.mybatis.OutboxInterceptor}가 담당하며,
  * Aspect 는 명시적 제외(opt-out) 처리를 수행한다.
  */
 @Slf4j

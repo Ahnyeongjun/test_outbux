@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.context;
+package io.github.ahnyeongjun.outbox.capture;
 
 /**
  * 트랜잭션 내 Outbox 이벤트 적재 및 루프 방지, suppress 관리.

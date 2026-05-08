@@ -17,18 +17,18 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.github.ahnyeongjun.outbox.aspect.OutboxAspect;
-import io.github.ahnyeongjun.outbox.context.OutboxEventFlusher;
-import io.github.ahnyeongjun.outbox.dialect.MySQLDialect;
-import io.github.ahnyeongjun.outbox.dialect.OutboxDialect;
-import io.github.ahnyeongjun.outbox.dialect.PostgreSQLDialect;
-import io.github.ahnyeongjun.outbox.interceptor.OutboxInterceptor;
-import io.github.ahnyeongjun.outbox.listener.HibernateOutboxListener;
-import io.github.ahnyeongjun.outbox.listener.OutboxHibernateIntegrator;
-import io.github.ahnyeongjun.outbox.model.DefaultOutboxConverter;
-import io.github.ahnyeongjun.outbox.model.OutboxConverter;
-import io.github.ahnyeongjun.outbox.store.JdbcOutboxStore;
-import io.github.ahnyeongjun.outbox.store.OutboxStore;
+import io.github.ahnyeongjun.outbox.adapter.jdbc.JdbcOutboxStore;
+import io.github.ahnyeongjun.outbox.adapter.jdbc.MySQLDialect;
+import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxDialect;
+import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxStore;
+import io.github.ahnyeongjun.outbox.adapter.jdbc.PostgreSQLDialect;
+import io.github.ahnyeongjun.outbox.adapter.jpa.HibernateOutboxListener;
+import io.github.ahnyeongjun.outbox.adapter.jpa.OutboxHibernateIntegrator;
+import io.github.ahnyeongjun.outbox.adapter.mybatis.OutboxInterceptor;
+import io.github.ahnyeongjun.outbox.capture.DefaultOutboxConverter;
+import io.github.ahnyeongjun.outbox.capture.OutboxAspect;
+import io.github.ahnyeongjun.outbox.capture.OutboxConverter;
+import io.github.ahnyeongjun.outbox.capture.OutboxEventFlusher;
 
 @Configuration
 @EnableScheduling

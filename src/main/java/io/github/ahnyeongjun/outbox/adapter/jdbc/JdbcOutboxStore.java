@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.store;
+package io.github.ahnyeongjun.outbox.adapter.jdbc;
 
 import java.sql.Timestamp;
 import java.util.List;
@@ -10,7 +10,6 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.transaction.annotation.Transactional;
 
-import io.github.ahnyeongjun.outbox.dialect.OutboxDialect;
 import io.github.ahnyeongjun.outbox.model.Outbox;
 import lombok.RequiredArgsConstructor;
 

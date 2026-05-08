@@ -1,14 +1,13 @@
-package io.github.ahnyeongjun.outbox.context;
+package io.github.ahnyeongjun.outbox.capture;
 
 import java.util.Map;
 
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxStore;
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
-import io.github.ahnyeongjun.outbox.model.OutboxConverter;
-import io.github.ahnyeongjun.outbox.store.OutboxStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 

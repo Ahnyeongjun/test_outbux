@@ -1,4 +1,6 @@
-package io.github.ahnyeongjun.outbox.model;
+package io.github.ahnyeongjun.outbox.capture;
+
+import io.github.ahnyeongjun.outbox.model.Outbox;
 
 /**
  * 도메인별 Outbox 변환 인터페이스.

@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.scheduler;
+package io.github.ahnyeongjun.outbox.publish;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -9,10 +9,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxStore;
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
-import io.github.ahnyeongjun.outbox.store.OutboxStore;
-import io.github.ahnyeongjun.outbox.writer.OutboxFileWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
