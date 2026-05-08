@@ -3,7 +3,15 @@
     "allow": [
       "Skill(sc:implement)",
       "Bash(xargs grep:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\side\\\\running\\\\test_outbux\\\\src\\\\main\\\\java\\\\io\\\\github\\\\ahnyeongjun\\\\outbox\" -Recurse -Filter \"*.java\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)"
     ]
   }
 }
