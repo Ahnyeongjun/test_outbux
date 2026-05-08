@@ -17,10 +17,15 @@ public class OutboxProperties {
 
     /**
      * Outbox 에 기록할 테이블 목록.
-     * Debezium debezium.source.table.include.list 와 동일하게 맞출 것.
-     * 스키마 prefix(insusr.) 없이 테이블명만 기입.
+     * 스키마 prefix 없이 테이블명만 기입.
      */
     private Set<String> tables = Set.of();
+
+    /** SQL 방언. postgresql (기본) | mysql | mariadb */
+    private String dialect = "postgresql";
+
+    /** PostgreSQL 전용 시퀀스 이름 */
+    private String sequenceName = "outbox_seq_seq";
 
     @Getter
     @Setter

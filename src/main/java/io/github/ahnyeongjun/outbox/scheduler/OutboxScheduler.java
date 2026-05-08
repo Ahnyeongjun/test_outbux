@@ -11,7 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
-import io.github.ahnyeongjun.outbox.repository.OutboxRepository;
+import io.github.ahnyeongjun.outbox.store.OutboxStore;
 import io.github.ahnyeongjun.outbox.writer.OutboxFileWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 public class OutboxScheduler {
 
     private final OutboxProperties properties;
-    private final OutboxRepository outboxRepository;
+    private final OutboxStore outboxStore;
     private final OutboxFileWriter outboxFileWriter;
 
     private final AtomicReference<Instant> lastFlush = new AtomicReference<>(Instant.now());
@@ -34,32 +34,31 @@ public class OutboxScheduler {
     @Scheduled(fixedDelayString = "${outbox.batch.check-interval-ms:5000}")
     @Transactional
     public void processOutbox() {
-        long pending = outboxRepository.countPending();
+        long pending = outboxStore.countPending();
         boolean timeTriggered = Duration.between(lastFlush.get(), Instant.now()).toMillis()
                 >= properties.getBatch().getTimeTriggerMs();
         boolean sizeTriggered = pending >= properties.getBatch().getSize();
 
         if (!timeTriggered && !sizeTriggered) return;
 
-        List<Outbox> batch = outboxRepository.findPendingWithLock(properties.getBatch().getSize());
+        List<Outbox> batch = outboxStore.findPendingWithLock(properties.getBatch().getSize());
         if (batch.isEmpty()) { lastFlush.set(Instant.now()); return; }
 
         try {
             outboxFileWriter.write(batch);
-            outboxRepository.markSent(batch);
+            outboxStore.markSent(batch);
             lastFlush.set(Instant.now());
             log.info("Outbox flushed {} events (time={}, size={})", batch.size(), timeTriggered, sizeTriggered);
         } catch (Exception e) {
-            batch.forEach(o -> outboxRepository.markFailed(o.getId()));
+            batch.forEach(o -> outboxStore.markFailed(o.getId()));
             log.error("Outbox flush failed: {}", e.getMessage(), e);
         }
     }
 
-    /** SENT 상태 7일 초과분 삭제 */
     @Scheduled(cron = "0 0 2 * * *")
     @Transactional
     public void cleanUpSent() {
-        outboxRepository.deleteOldSent();
+        outboxStore.deleteOldSent();
         log.info("Outbox cleanup: deleted SENT events older than 7 days");
     }
 }

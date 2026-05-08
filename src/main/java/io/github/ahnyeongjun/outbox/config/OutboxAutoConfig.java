@@ -1,51 +1,110 @@
 package io.github.ahnyeongjun.outbox.config;
 
+import java.util.List;
 import java.util.Map;
 
-import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.FilterType;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.github.ahnyeongjun.outbox.aspect.OutboxAspect;
+import io.github.ahnyeongjun.outbox.context.OutboxEventFlusher;
+import io.github.ahnyeongjun.outbox.dialect.MySQLDialect;
+import io.github.ahnyeongjun.outbox.dialect.OutboxDialect;
+import io.github.ahnyeongjun.outbox.dialect.PostgreSQLDialect;
 import io.github.ahnyeongjun.outbox.interceptor.OutboxInterceptor;
+import io.github.ahnyeongjun.outbox.listener.HibernateOutboxListener;
+import io.github.ahnyeongjun.outbox.listener.OutboxHibernateIntegrator;
 import io.github.ahnyeongjun.outbox.model.DefaultOutboxConverter;
 import io.github.ahnyeongjun.outbox.model.OutboxConverter;
-import io.github.ahnyeongjun.outbox.repository.OutboxRepository;
+import io.github.ahnyeongjun.outbox.store.JdbcOutboxStore;
+import io.github.ahnyeongjun.outbox.store.OutboxStore;
 
 @Configuration
 @EnableScheduling
 @EnableConfigurationProperties(OutboxProperties.class)
 @ComponentScan(value = "io.github.ahnyeongjun.outbox",
-               excludeFilters = @ComponentScan.Filter(type = org.springframework.context.annotation.FilterType.ASSIGNABLE_TYPE,
+               excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE,
                                                       classes = OutboxAspect.class))
-@MapperScan("io.github.ahnyeongjun.outbox.mapper")
 public class OutboxAutoConfig {
 
-    /** @OutboxDomain(enabled=false) opt-out 처리 담당 */
     @Bean
     public OutboxAspect outboxAspect() {
         return new OutboxAspect();
     }
 
-    /** 도메인 전용 컨버터가 없을 때 폴백. 민감 필드 자동 제외. */
     @Bean("defaultOutboxConverter")
     @ConditionalOnMissingBean(name = "defaultOutboxConverter")
     public OutboxConverter defaultOutboxConverter(ObjectMapper objectMapper) {
         return new DefaultOutboxConverter(objectMapper);
     }
 
-    /** MyBatis Plugin 등록 — outbox.tables 목록 기반 자동 감지 */
+    /** outbox.dialect 값에 따라 방언 선택. 직접 OutboxDialect 빈을 등록하면 이 빈은 건너뜀 */
     @Bean
-    public OutboxInterceptor outboxInterceptor(OutboxProperties properties,
-                                               Map<String, OutboxConverter> converters,
-                                               ObjectProvider<OutboxRepository> outboxRepositoryProvider) {
-        return new OutboxInterceptor(properties, converters, outboxRepositoryProvider);
+    @ConditionalOnMissingBean(OutboxDialect.class)
+    public OutboxDialect outboxDialect(OutboxProperties properties) {
+        return switch (properties.getDialect().toLowerCase()) {
+            case "mysql", "mariadb" -> new MySQLDialect();
+            default -> new PostgreSQLDialect(properties.getSequenceName());
+        };
+    }
+
+    /** 기본 저장소. 직접 OutboxStore 빈을 등록하면 이 빈은 건너뜀 */
+    @Bean
+    @ConditionalOnMissingBean(OutboxStore.class)
+    public OutboxStore outboxStore(NamedParameterJdbcTemplate jdbcTemplate, OutboxDialect dialect) {
+        return new JdbcOutboxStore(jdbcTemplate, dialect);
+    }
+
+    @Bean
+    public OutboxEventFlusher outboxEventFlusher(OutboxStore outboxStore) {
+        return new OutboxEventFlusher(outboxStore);
+    }
+
+    /** MyBatis 사용 환경 — Executor.update() 인터셉트 기반 자동 이벤트 캡처 */
+    @Configuration
+    @ConditionalOnClass(name = "org.apache.ibatis.plugin.Interceptor")
+    static class MyBatisOutboxConfig {
+
+        @Bean
+        @ConditionalOnBean(name = "sqlSessionFactory")
+        public OutboxInterceptor outboxInterceptor(OutboxProperties properties,
+                                                   Map<String, OutboxConverter> converters,
+                                                   OutboxEventFlusher flusher) {
+            return new OutboxInterceptor(properties, converters, flusher);
+        }
+    }
+
+    /** JPA/Hibernate 사용 환경 — PostInsert/Update/Delete 이벤트 기반 자동 이벤트 캡처 */
+    @Configuration
+    @ConditionalOnClass(name = "org.hibernate.event.spi.PostInsertEventListener")
+    @ConditionalOnBean(name = "entityManagerFactory")
+    static class JpaOutboxConfig {
+
+        @Bean
+        public HibernateOutboxListener hibernateOutboxListener(OutboxProperties properties,
+                                                               Map<String, OutboxConverter> converters,
+                                                               OutboxEventFlusher flusher) {
+            return new HibernateOutboxListener(properties, converters, flusher);
+        }
+
+        @Bean
+        public HibernatePropertiesCustomizer outboxHibernateCustomizer(HibernateOutboxListener listener) {
+            return props -> props.put(
+                    "hibernate.integrator_provider",
+                    (org.hibernate.jpa.boot.spi.IntegratorProvider)
+                    () -> List.of(new OutboxHibernateIntegrator(listener))
+            );
+        }
     }
 }

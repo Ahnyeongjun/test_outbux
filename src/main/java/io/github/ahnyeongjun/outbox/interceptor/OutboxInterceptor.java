@@ -10,17 +10,12 @@ import org.apache.ibatis.plugin.Interceptor;
 import org.apache.ibatis.plugin.Intercepts;
 import org.apache.ibatis.plugin.Invocation;
 import org.apache.ibatis.plugin.Signature;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-
-import org.springframework.beans.factory.ObjectProvider;
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.context.OutboxContext;
 import io.github.ahnyeongjun.outbox.context.OutboxContextData;
-import io.github.ahnyeongjun.outbox.model.Outbox;
+import io.github.ahnyeongjun.outbox.context.OutboxEventFlusher;
 import io.github.ahnyeongjun.outbox.model.OutboxConverter;
-import io.github.ahnyeongjun.outbox.repository.OutboxRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -43,27 +38,19 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class OutboxInterceptor implements Interceptor {
 
-    private static final String OUTBOX_MAPPER_PREFIX = "io.github.ahnyeongjun.outbox.mapper.OutboxMapper";
-
     private final OutboxProperties properties;
     private final Map<String, OutboxConverter> converters;
-    private final ObjectProvider<OutboxRepository> outboxRepositoryProvider;
+    private final OutboxEventFlusher flusher;
 
-    /** mapper namespace → 테이블명 캐시 */
     private final Map<String, String> tableNameCache = new ConcurrentHashMap<>();
 
     @Override
     public Object intercept(Invocation invocation) throws Throwable {
         Object result = invocation.proceed();
 
-        MappedStatement ms = (MappedStatement) invocation.getArgs()[0];
-
-        // OutboxMapper 자기참조 방지
-        if (ms.getId().startsWith(OUTBOX_MAPPER_PREFIX)) return result;
-
-        // suppress 모드 (폐쇄망 수신 이벤트 재사용 시)
         if (OutboxContext.isSuppressed()) return result;
 
+        MappedStatement ms = (MappedStatement) invocation.getArgs()[0];
         SqlCommandType sqlType = ms.getSqlCommandType();
         if (sqlType == SqlCommandType.SELECT || sqlType == SqlCommandType.UNKNOWN) return result;
 
@@ -74,7 +61,6 @@ public class OutboxInterceptor implements Interceptor {
         String eventType = resolveEventType(sqlType);
         Object parameter = invocation.getArgs()[1];
 
-        // 도메인 전용 컨버터가 없으면 기본 컨버터 폴백
         String beanName = domain.toLowerCase().replace("_", "") + "OutboxConverter";
         OutboxConverter converter = converters.getOrDefault(beanName,
                 converters.get("defaultOutboxConverter"));
@@ -84,9 +70,7 @@ public class OutboxInterceptor implements Interceptor {
             return result;
         }
 
-        OutboxContextData ctx = OutboxContext.getOrCreate();
-        ctx.addEvent(converter.convert(parameter, domain, eventType));
-        registerSyncIfNeeded(ctx);
+        flusher.capture(OutboxContext.getOrCreate(), converter.convert(parameter, domain, eventType));
 
         return result;
     }
@@ -98,44 +82,12 @@ public class OutboxInterceptor implements Interceptor {
     private String resolveTableName(MappedStatement ms) {
         String namespace = ms.getId().substring(0, ms.getId().lastIndexOf('.'));
         return tableNameCache.computeIfAbsent(namespace, ns -> {
-            String mapperClass = ns.substring(ns.lastIndexOf('.') + 1);          // McAuthGrpMenuFuncMpnMapper
-            String withoutSuffix = mapperClass.replaceAll("Mapper$", "");        // McAuthGrpMenuFuncMpn
+            String mapperClass = ns.substring(ns.lastIndexOf('.') + 1);
+            String withoutSuffix = mapperClass.replaceAll("Mapper$", "");
             return withoutSuffix
-                    .replaceAll("([a-z])([A-Z])", "$1_$2")                       // Mc_Auth_Grp_Menu_Func_Mpn
-                    .toLowerCase();                                               // mc_auth_grp_menu_func_mpn
+                    .replaceAll("([a-z])([A-Z])", "$1_$2")
+                    .toLowerCase();
         });
-    }
-
-    private void registerSyncIfNeeded(OutboxContextData ctx) {
-        if (ctx.isSyncRegistered()) return;
-
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            flushEvents(ctx);
-            OutboxContext.clear();
-            return;
-        }
-
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void beforeCommit(boolean readOnly) {
-                if (!readOnly) flushEvents(ctx);
-            }
-            @Override
-            public void afterCompletion(int status) {
-                OutboxContext.clear();
-            }
-        });
-        ctx.markSyncRegistered();
-    }
-
-    private void flushEvents(OutboxContextData ctx) {
-        if (!ctx.hasPendingEvents()) return;
-        try {
-            outboxRepositoryProvider.getObject().saveAll(ctx.getPendingEvents());
-            log.debug("Outbox flushed {} events", ctx.getPendingEvents().size());
-        } catch (Exception e) {
-            log.error("Outbox flush failed: {}", e.getMessage(), e);
-        }
     }
 
     private String resolveEventType(SqlCommandType type) {
