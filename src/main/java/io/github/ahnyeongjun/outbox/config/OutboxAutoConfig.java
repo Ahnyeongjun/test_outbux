@@ -67,8 +67,10 @@ public class OutboxAutoConfig {
     }
 
     @Bean
-    public OutboxEventFlusher outboxEventFlusher(OutboxStore outboxStore) {
-        return new OutboxEventFlusher(outboxStore);
+    public OutboxEventFlusher outboxEventFlusher(OutboxStore outboxStore,
+                                                  OutboxProperties properties,
+                                                  Map<String, OutboxConverter> converters) {
+        return new OutboxEventFlusher(outboxStore, properties, converters);
     }
 
     /** MyBatis 사용 환경 — Executor.update() 인터셉트 기반 자동 이벤트 캡처 */
@@ -78,10 +80,8 @@ public class OutboxAutoConfig {
 
         @Bean
         @ConditionalOnBean(name = "sqlSessionFactory")
-        public OutboxInterceptor outboxInterceptor(OutboxProperties properties,
-                                                   Map<String, OutboxConverter> converters,
-                                                   OutboxEventFlusher flusher) {
-            return new OutboxInterceptor(properties, converters, flusher);
+        public OutboxInterceptor outboxInterceptor(OutboxEventFlusher flusher) {
+            return new OutboxInterceptor(flusher);
         }
     }
 
@@ -92,10 +92,8 @@ public class OutboxAutoConfig {
     static class JpaOutboxConfig {
 
         @Bean
-        public HibernateOutboxListener hibernateOutboxListener(OutboxProperties properties,
-                                                               Map<String, OutboxConverter> converters,
-                                                               OutboxEventFlusher flusher) {
-            return new HibernateOutboxListener(properties, converters, flusher);
+        public HibernateOutboxListener hibernateOutboxListener(OutboxEventFlusher flusher) {
+            return new HibernateOutboxListener(flusher);
         }
 
         @Bean
