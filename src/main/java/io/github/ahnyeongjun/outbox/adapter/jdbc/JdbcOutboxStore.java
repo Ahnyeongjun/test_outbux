@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.transaction.annotation.Transactional;
 
 import io.github.ahnyeongjun.outbox.model.Outbox;
+import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor

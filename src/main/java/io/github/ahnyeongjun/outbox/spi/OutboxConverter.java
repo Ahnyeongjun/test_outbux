@@ -1,9 +1,9 @@
-package io.github.ahnyeongjun.outbox.capture;
+package io.github.ahnyeongjun.outbox.spi;
 
 import io.github.ahnyeongjun.outbox.model.Outbox;
 
 /**
- * 도메인별 Outbox 변환 인터페이스.
+ * 도메인별 Outbox 변환 SPI.
  *
  * <p>Bean 이름 규칙: {@code {domain소문자}OutboxConverter}
  * <pre>

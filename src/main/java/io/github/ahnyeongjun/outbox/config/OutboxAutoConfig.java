@@ -20,15 +20,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ahnyeongjun.outbox.adapter.jdbc.JdbcOutboxStore;
 import io.github.ahnyeongjun.outbox.adapter.jdbc.MySQLDialect;
 import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxDialect;
-import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxStore;
 import io.github.ahnyeongjun.outbox.adapter.jdbc.PostgreSQLDialect;
 import io.github.ahnyeongjun.outbox.adapter.jpa.HibernateOutboxListener;
 import io.github.ahnyeongjun.outbox.adapter.jpa.OutboxHibernateIntegrator;
 import io.github.ahnyeongjun.outbox.adapter.mybatis.OutboxInterceptor;
 import io.github.ahnyeongjun.outbox.capture.DefaultOutboxConverter;
 import io.github.ahnyeongjun.outbox.capture.OutboxAspect;
-import io.github.ahnyeongjun.outbox.capture.OutboxConverter;
 import io.github.ahnyeongjun.outbox.capture.OutboxEventFlusher;
+import io.github.ahnyeongjun.outbox.spi.OutboxConverter;
+import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 
 @Configuration
 @EnableScheduling

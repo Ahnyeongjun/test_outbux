@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
 import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
 
 import io.github.ahnyeongjun.outbox.model.Outbox;
+import io.github.ahnyeongjun.outbox.spi.OutboxConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
