@@ -1,23 +1,20 @@
-# inops-outbox-core
+# outbox-core
 
-**MyBatis 전용** Outbox 패턴 라이브러리.  
-MyBatis `Executor.update()` 인터셉터로 DML 이벤트를 자동 캡처하여 폐쇄망으로 파일 동기화합니다.
-
-> JPA / Hibernate 환경에서는 동작하지 않습니다.
+Outbox 패턴 라이브러리. MyBatis / JPA(Hibernate) 환경을 자동 감지하여 DML 이벤트를 캡처하고 폐쇄망으로 파일 동기화합니다.
 
 ## 개요
 
 ```
 내부망 서비스
-  └─ MyBatis DML 실행
-       └─ OutboxInterceptor 감지
-            └─ outbox 테이블 저장 (트랜잭션 내)
-                 └─ OutboxScheduler 배치
-                      └─ sync_*.json.gz 파일 생성
-                           └─ 폐쇄망 수신 서버 처리
+  └─ DML 실행 (MyBatis Interceptor 또는 JPA Event Listener)
+       └─ outbox 테이블 저장 (beforeCommit 훅, 비즈니스 트랜잭션 내)
+            └─ OutboxScheduler 배치
+                 └─ sync_*.json.gz 파일 생성
+                      └─ 폐쇄망 수신 서버 처리
 ```
 
-- **자동 감지**: `outbox.tables`에 등록된 테이블의 INSERT/UPDATE/DELETE를 자동 캡처
+- **자동 감지**: `outbox.tables`에 등록된 테이블의 INSERT/UPDATE/DELETE 자동 캡처
+- **이중 지원**: MyBatis `Executor.update()` 인터셉터 + JPA `PostInsert/Update/Delete` 이벤트 리스너
 - **트랜잭션 보장**: `beforeCommit` 훅으로 비즈니스 트랜잭션과 원자적으로 저장
 - **이중 트리거**: 건수(`batch.size`) 또는 시간(`batch.time-trigger-ms`) 조건 중 먼저 충족 시 배치 실행
 - **gzip 파일 출력**: `sync_{seqFrom}_{seqTo}_{timestamp}.json.gz` 형식으로 압축 저장
@@ -30,8 +27,9 @@ MyBatis `Executor.update()` 인터셉터로 DML 이벤트를 자동 캡처하여
 |------|------|
 | Java | 17+ |
 | Spring Boot | 3.1+ |
-| MyBatis Spring Boot Starter | 3.0+ (**필수**) |
-| PostgreSQL | (스키마 적용 필요) |
+| MyBatis Spring Boot Starter | 3.0+ (MyBatis 사용 시) |
+| Hibernate | 6.x+ (JPA 사용 시) |
+| PostgreSQL / MySQL / MariaDB | (스키마 적용 필요) |
 
 ---
 
@@ -41,8 +39,8 @@ MyBatis `Executor.update()` 인터셉터로 DML 이벤트를 자동 캡처하여
 
 ```xml
 <dependency>
-    <groupId>re.kr.inspace.web</groupId>
-    <artifactId>inops-outbox-core</artifactId>
+    <groupId>io.github.ahnyeongjun</groupId>
+    <artifactId>outbox-core</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 </dependency>
 ```
@@ -53,8 +51,9 @@ Spring Boot Auto-Configuration으로 별도 `@EnableXxx` 없이 자동 등록됩
 
 ## DB 스키마
 
+### PostgreSQL
+
 ```sql
--- src/main/resources/sql/outbox-schema.sql 참고
 CREATE SEQUENCE IF NOT EXISTS outbox_seq_seq START 1;
 
 CREATE TABLE IF NOT EXISTS outbox (
@@ -62,11 +61,27 @@ CREATE TABLE IF NOT EXISTS outbox (
     seq        BIGINT      NOT NULL DEFAULT NEXTVAL('outbox_seq_seq'),
     domain     VARCHAR(50) NOT NULL,
     event_type VARCHAR(20) NOT NULL,
-    source     VARCHAR(20) NOT NULL,  -- INTERNAL | CLOSED_NET
+    source     VARCHAR(20) NOT NULL,
     payload    JSONB,
     status     VARCHAR(20) NOT NULL DEFAULT 'PENDING',
     created_at TIMESTAMP   NOT NULL DEFAULT NOW(),
     sent_at    TIMESTAMP
+);
+```
+
+### MySQL / MariaDB
+
+```sql
+CREATE TABLE IF NOT EXISTS outbox (
+    id         BIGINT      PRIMARY KEY AUTO_INCREMENT,
+    seq        BIGINT      NOT NULL AUTO_INCREMENT,
+    domain     VARCHAR(50) NOT NULL,
+    event_type VARCHAR(20) NOT NULL,
+    source     VARCHAR(20) NOT NULL,
+    payload    JSON,
+    status     VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    created_at DATETIME    NOT NULL DEFAULT NOW(),
+    sent_at    DATETIME
 );
 ```
 
@@ -87,19 +102,22 @@ CREATE TABLE IF NOT EXISTS processed_seq (
 
 ```yaml
 outbox:
-  # 감시할 테이블 목록 (스키마 prefix 제외, Debezium include.list와 동일 형식)
+  # 감시할 테이블 목록 (스키마 prefix 제외)
   tables:
     - user
     - order_item
     - product_category
 
+  dialect: postgresql     # postgresql(기본값) | mysql | mariadb
+  sequence-name: outbox_seq_seq  # PostgreSQL 시퀀스명 (기본값)
+
   file:
-    path: /data/outbox          # gzip 파일 저장 경로 (기본값: D:/files/outbox)
+    path: /data/outbox    # gzip 파일 저장 경로 (기본값: D:/files/outbox)
 
   batch:
-    size: 1000                  # 건수 트리거 임계값 (기본값: 1000)
-    time-trigger-ms: 60000      # 시간 트리거 간격 ms (기본값: 60초)
-    check-interval-ms: 5000     # 스케줄러 폴링 간격 ms (기본값: 5초)
+    size: 1000            # 건수 트리거 임계값 (기본값: 1000)
+    time-trigger-ms: 60000   # 시간 트리거 간격 ms (기본값: 60초)
+    check-interval-ms: 5000  # 스케줄러 폴링 간격 ms (기본값: 5초)
 ```
 
 ---
@@ -108,29 +126,17 @@ outbox:
 
 ### `@OutboxDomain` — 클래스 레벨
 
-서비스 클래스에 붙여 Outbox 동작을 명시적으로 제어합니다.
-
 ```java
-// 도메인명 직접 지정 (기본값: 테이블명으로 자동 추론)
-@OutboxDomain("USER_MGMT")
-@Service
-public class UserService { ... }
-
 // 해당 서비스의 모든 이벤트 캡처 비활성화
 @OutboxDomain(enabled = false)
 @Service
 public class InternalSyncService { ... }
 ```
 
-`auto-detect` 모드에서는 `outbox.tables`에 등록된 테이블을 사용하는 Mapper가 속한 Service를 자동 감지합니다.
-
 ### `@OutboxEvent` — 메서드 레벨
-
-`@OutboxDomain` 서비스 내에서 메서드 단위로 세부 제어합니다.
 
 ```java
 @Service
-@OutboxDomain
 public class OrderService {
 
     // 이 메서드는 Outbox 캡처에서 제외
@@ -147,8 +153,8 @@ public class OrderService {
 
 ## 커스텀 컨버터
 
-기본 컨버터(`DefaultOutboxConverter`)는 파라미터 객체를 JSON 직렬화합니다.  
-도메인별로 payload를 커스터마이징하려면 `OutboxConverter`를 구현하고 빈 이름 규칙을 따릅니다.
+기본 컨버터(`DefaultOutboxConverter`)는 엔티티를 JSON 직렬화하며 민감 필드(password, token 등)를 자동 제외합니다.  
+도메인별로 payload를 커스터마이징하려면 `OutboxConverter`(spi 패키지)를 구현하고 빈 이름 규칙을 따릅니다.
 
 **빈 이름 규칙**: `{도메인 소문자}OutboxConverter`
 
@@ -158,8 +164,8 @@ public class OrderService {
 public class OrderOutboxConverter implements OutboxConverter {
 
     @Override
-    public Outbox convert(Object result, String domain, String eventType) {
-        Order order = (Order) result;
+    public Outbox convert(Object entity, String domain, String eventType) {
+        Order order = (Order) entity;
         return Outbox.builder()
                 .domain(domain)
                 .eventType(eventType)
@@ -170,7 +176,20 @@ public class OrderOutboxConverter implements OutboxConverter {
 }
 ```
 
-등록된 커스텀 컨버터가 없으면 `defaultOutboxConverter`로 폴백합니다.
+커스텀 컨버터가 없으면 `defaultOutboxConverter`로 폴백합니다.
+
+---
+
+## 커스텀 저장소
+
+기본 저장소는 JDBC(`JdbcOutboxStore`)입니다. JPA, R2DBC 등 다른 영속성 기술을 사용하려면 `OutboxStore`(spi 패키지)를 구현해 빈으로 등록합니다.
+
+```java
+@Component
+public class JpaOutboxStore implements OutboxStore {
+    // OutboxStore 인터페이스 구현
+}
+```
 
 ---
 
@@ -200,63 +219,6 @@ public class OrderOutboxConverter implements OutboxConverter {
 
 ---
 
-## 테이블명 자동 추론
-
-Mapper 클래스명에서 테이블명을 CamelCase → snake_case 변환으로 추론합니다.
-
-| Mapper 클래스 | 추론된 테이블명 |
-|---|---|
-| `UserMapper` | `user` |
-| `OrderItemMapper` | `order_item` |
-| `ProductCategoryMapper` | `product_category` |
-| `McAuthGrpMenuFuncMpnMapper` | `mc_auth_grp_menu_func_mpn` |
-
-추론된 테이블명이 `outbox.tables`에 포함된 경우에만 이벤트를 캡처합니다.
-
----
-
-## 핵심 구현 상세
-
-### TransactionSynchronization — 트랜잭션 원자성 보장
-
-`OutboxInterceptor`는 MyBatis DML을 감지하면 즉시 DB에 쓰지 않고, Spring의 `TransactionSynchronization`을 등록합니다.
-
-```
-비즈니스 로직 실행
-  └─ DML 감지 → 이벤트를 ThreadLocal(OutboxContextData)에 적재
-       └─ beforeCommit() 호출 → outbox 테이블에 batchInsert
-            └─ 비즈니스 트랜잭션 커밋 ─────────────────────────┐
-                                                               ↓
-                                               비즈니스 데이터 + outbox 동시 커밋
-```
-
-`beforeCommit()` 안에서 삽입하기 때문에 비즈니스 데이터와 outbox 레코드가 **하나의 트랜잭션**으로 커밋됩니다. 비즈니스 롤백 시 outbox도 함께 롤백됩니다.
-
-트랜잭션 외부(`@Transactional` 없는 환경)에서는 DML 직후 즉시 flush합니다.
-
----
-
-### FOR UPDATE SKIP LOCKED — 다중 인스턴스 배치 중복 방지
-
-`OutboxScheduler`가 처리할 행을 조회할 때 사용하는 잠금 전략입니다.
-
-```sql
-SELECT ... FROM outbox
-WHERE status = 'PENDING'
-ORDER BY seq ASC
-LIMIT #{limit}
-FOR UPDATE SKIP LOCKED   -- 다른 인스턴스가 잠근 행은 건너뜀
-```
-
-| 전략 | 동작 |
-|------|------|
-| `FOR UPDATE` | 잠긴 행 앞에서 대기 → 동일 배치 중복 처리 위험 |
-| `FOR UPDATE SKIP LOCKED` | 잠긴 행을 건너뛰고 다음 행 처리 → 인스턴스 간 자동 분산 |
-
-애플리케이션 인스턴스를 여러 개 띄워도 각 인스턴스가 겹치지 않는 배치를 가져가므로 별도 분산 락 없이 수평 확장이 가능합니다.
-
----
-
 ## Outbox 상태
 
 | 상태 | 설명 |
@@ -266,3 +228,33 @@ FOR UPDATE SKIP LOCKED   -- 다른 인스턴스가 잠근 행은 건너뜀
 | `FAILED` | 파일 쓰기 실패 |
 
 SENT 상태 레코드는 매일 02:00에 7일 초과분 자동 정리됩니다.
+
+---
+
+## 핵심 구현 상세
+
+### TransactionSynchronization — 트랜잭션 원자성 보장
+
+DML 감지 즉시 DB에 쓰지 않고 Spring의 `TransactionSynchronization`을 등록합니다.
+
+```
+비즈니스 로직 실행
+  └─ DML 감지 → 이벤트를 ThreadLocal(OutboxContextData)에 적재
+       └─ beforeCommit() 호출 → outbox 테이블에 batchInsert
+            └─ 비즈니스 트랜잭션 커밋
+                 └─ 비즈니스 데이터 + outbox 동시 커밋 (원자적)
+```
+
+트랜잭션 외부에서는 DML 직후 즉시 flush합니다.
+
+### FOR UPDATE SKIP LOCKED — 다중 인스턴스 배치 중복 방지
+
+```sql
+SELECT ... FROM outbox
+WHERE status = 'PENDING'
+ORDER BY seq ASC
+LIMIT #{limit}
+FOR UPDATE SKIP LOCKED
+```
+
+인스턴스를 여러 개 띄워도 각 인스턴스가 겹치지 않는 배치를 가져가므로 별도 분산 락 없이 수평 확장이 가능합니다.
