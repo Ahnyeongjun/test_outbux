@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -32,6 +33,7 @@ class OutboxAutoConfigTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                     DataSourceAutoConfiguration.class,
+                    DataSourceTransactionManagerAutoConfiguration.class,
                     JdbcTemplateAutoConfiguration.class,
                     OutboxAutoConfig.class))
             .withBean(ObjectMapper.class, ObjectMapper::new)

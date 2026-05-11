@@ -1,20 +1,24 @@
 package io.github.ahnyeongjun.outbox.publish;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
@@ -25,6 +29,7 @@ class OutboxSchedulerTest {
 
     @Mock OutboxStore store;
     @Mock OutboxFileWriter fileWriter;
+    @Mock PlatformTransactionManager txm;
 
     OutboxProperties properties;
     OutboxScheduler scheduler;
@@ -33,8 +38,8 @@ class OutboxSchedulerTest {
     void setUp() {
         properties = new OutboxProperties();
         properties.getBatch().setSize(10);
-        properties.getBatch().setTimeTriggerMs(10 * 60 * 1000);   // 10분: 시간 트리거는 안 걸림
-        scheduler = new OutboxScheduler(properties, store, fileWriter);
+        properties.getBatch().setTimeTriggerMs(10 * 60 * 1000);
+        scheduler = new OutboxScheduler(properties, store, fileWriter, txm);
     }
 
     @Test
@@ -43,45 +48,49 @@ class OutboxSchedulerTest {
 
         scheduler.processOutbox();
 
-        verify(store, never()).findPendingWithLock(anyInt());
-        verify(fileWriter, never()).write(anyList());
+        verify(store, never()).processBatch(any(), anyInt(), any());
     }
 
     @Test
-    void sizeTrigger_picksAndMarksSent() {
+    void sizeTrigger_delegatesToProcessBatchWithFileWriter() {
         when(store.countPending()).thenReturn(10L);
-        List<Outbox> batch = List.of(outbox(1L));
-        when(store.findPendingWithLock(10)).thenReturn(batch);
+        when(store.processBatch(any(), eq(10), any())).thenReturn(3);
 
         scheduler.processOutbox();
 
-        verify(fileWriter).write(batch);
-        verify(store).markSent(batch);
+        verify(store).processBatch(any(TransactionTemplate.class), eq(10), any());
     }
 
     @Test
-    void emptyBatch_noWriteNoMark() {
-        when(store.countPending()).thenReturn(10L);
-        when(store.findPendingWithLock(anyInt())).thenReturn(List.of());
+    void timeTrigger_firesEvenIfPendingBelowSize() {
+        properties.getBatch().setTimeTriggerMs(0L);
+        when(store.countPending()).thenReturn(1L);
+        when(store.processBatch(any(), anyInt(), any())).thenReturn(1);
 
         scheduler.processOutbox();
 
-        verify(fileWriter, never()).write(anyList());
-        verify(store, never()).markSent(anyList());
+        verify(store).processBatch(any(), eq(10), any());
     }
 
     @Test
-    void fileWriteFailure_marksEachRowFailed() {
+    void handlerArgPassedToProcessBatch_isFileWriterWrite() {
         when(store.countPending()).thenReturn(10L);
-        List<Outbox> batch = List.of(outbox(1L), outbox(2L));
-        when(store.findPendingWithLock(anyInt())).thenReturn(batch);
-        when(fileWriter.write(batch)).thenThrow(new RuntimeException("disk full"));
+        when(store.processBatch(any(), anyInt(), any())).thenReturn(2);
 
         scheduler.processOutbox();
 
-        verify(store, times(1)).markFailed(1L);
-        verify(store, times(1)).markFailed(2L);
-        verify(store, never()).markSent(any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Consumer<List<Outbox>>> handlerCaptor =
+                ArgumentCaptor.forClass(Consumer.class);
+        verify(store).processBatch(any(), anyInt(), handlerCaptor.capture());
+
+        // 캡처된 핸들러를 실행하면 OutboxFileWriter.write 가 호출되어야 함
+        List<Outbox> dummyBatch = List.of(
+                Outbox.builder().id(1L).seq(1L).domain("USER")
+                        .eventType("CREATED").source("INTERNAL").payload("{}").build()
+        );
+        handlerCaptor.getValue().accept(dummyBatch);
+        verify(fileWriter).write(dummyBatch);
     }
 
     @Test
@@ -91,18 +100,13 @@ class OutboxSchedulerTest {
     }
 
     @Test
-    void timeTrigger_firesEvenIfPendingBelowSize() throws Exception {
-        properties.getBatch().setTimeTriggerMs(0L); // 즉시 시간 트리거 충족
-        when(store.countPending()).thenReturn(1L);
-        when(store.findPendingWithLock(anyInt())).thenReturn(List.of(outbox(99L)));
+    void processBatch_zeroResult_doesNotThrow() {
+        when(store.countPending()).thenReturn(10L);
+        when(store.processBatch(any(), anyInt(), any())).thenReturn(0);
 
+        // empty batch → 아무 부작용 없이 종료
+        assertThat(scheduler).isNotNull();
         scheduler.processOutbox();
-
-        verify(fileWriter).write(anyList());
-    }
-
-    private Outbox outbox(long id) {
-        return Outbox.builder().id(id).seq(id).domain("USER")
-                .eventType("CREATED").source("INTERNAL").payload("{}").build();
+        verify(store).processBatch(any(), anyInt(), any());
     }
 }

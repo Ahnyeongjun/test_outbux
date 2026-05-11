@@ -2,36 +2,46 @@ package io.github.ahnyeongjun.outbox.publish;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
-import io.github.ahnyeongjun.outbox.model.Outbox;
 import io.github.ahnyeongjun.outbox.spi.OutboxStore;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * Outbox 파일 변환 배치.
  * 시간 트리거 OR 건수 트리거 중 먼저 충족되는 조건으로 실행.
+ *
+ * <p>락+처리+마킹은 {@link OutboxStore#processBatch} 가 한 트랜잭션으로 묶어 안전성을 보장한다.
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class OutboxScheduler {
 
     private final OutboxProperties properties;
     private final OutboxStore outboxStore;
     private final OutboxFileWriter outboxFileWriter;
+    private final TransactionTemplate processBatchTx;
 
     private final AtomicReference<Instant> lastFlush = new AtomicReference<>(Instant.now());
 
+    public OutboxScheduler(OutboxProperties properties,
+                           OutboxStore outboxStore,
+                           OutboxFileWriter outboxFileWriter,
+                           PlatformTransactionManager transactionManager) {
+        this.properties = properties;
+        this.outboxStore = outboxStore;
+        this.outboxFileWriter = outboxFileWriter;
+        this.processBatchTx = new TransactionTemplate(transactionManager);
+    }
+
     @Scheduled(fixedDelayString = "${outbox.batch.check-interval-ms:5000}")
-    @Transactional
     public void processOutbox() {
         long pending = outboxStore.countPending();
         boolean timeTriggered = Duration.between(lastFlush.get(), Instant.now()).toMillis()
@@ -40,17 +50,15 @@ public class OutboxScheduler {
 
         if (!timeTriggered && !sizeTriggered) return;
 
-        List<Outbox> batch = outboxStore.findPendingWithLock(properties.getBatch().getSize());
-        if (batch.isEmpty()) { lastFlush.set(Instant.now()); return; }
+        int handled = outboxStore.processBatch(
+                processBatchTx,
+                properties.getBatch().getSize(),
+                outboxFileWriter::write
+        );
+        lastFlush.set(Instant.now());
 
-        try {
-            outboxFileWriter.write(batch);
-            outboxStore.markSent(batch);
-            lastFlush.set(Instant.now());
-            log.info("Outbox flushed {} events (time={}, size={})", batch.size(), timeTriggered, sizeTriggered);
-        } catch (Exception e) {
-            batch.forEach(o -> outboxStore.markFailed(o.getId()));
-            log.error("Outbox flush failed: {}", e.getMessage(), e);
+        if (handled > 0) {
+            log.info("Outbox processed {} events (time={}, size={})", handled, timeTriggered, sizeTriggered);
         }
     }
 
