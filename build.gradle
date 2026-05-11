@@ -1,0 +1,67 @@
+plugins {
+    id 'java-library'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'io.github.ahnyeongjun'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.boot:spring-boot-dependencies:3.1.4"
+    }
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+ext {
+    mybatisVersion = '3.0.2'
+    jmhVersion = '1.37'
+    gatlingVersion = '3.10.5'
+    embeddedPostgresVersion = '2.0.7'
+}
+
+dependencies {
+    compileOnly 'org.springframework.boot:spring-boot-starter-aop'
+    compileOnly 'org.springframework.boot:spring-boot-starter-jdbc'
+    compileOnly 'org.springframework.boot:spring-boot-starter-data-jpa'
+    compileOnly "org.mybatis.spring.boot:mybatis-spring-boot-starter:${mybatisVersion}"
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind'
+    compileOnly 'io.micrometer:micrometer-core'
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-web'
+    testImplementation 'org.springframework.boot:spring-boot-starter-aop'
+    testImplementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    testImplementation 'com.fasterxml.jackson.core:jackson-databind'
+    testImplementation "org.mybatis.spring.boot:mybatis-spring-boot-starter:${mybatisVersion}"
+    testImplementation "org.openjdk.jmh:jmh-core:${jmhVersion}"
+    testImplementation "io.gatling.highcharts:gatling-charts-highcharts:${gatlingVersion}"
+    testImplementation "io.gatling:gatling-app:${gatlingVersion}"
+    testImplementation "io.zonky.test:embedded-postgres:${embeddedPostgresVersion}"
+    testRuntimeOnly 'com.h2database:h2'
+    testRuntimeOnly 'org.postgresql:postgresql'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+    testAnnotationProcessor "org.openjdk.jmh:jmh-generator-annprocess:${jmhVersion}"
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
