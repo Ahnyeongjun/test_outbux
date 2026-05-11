@@ -7,7 +7,6 @@ import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -24,7 +23,6 @@ import io.github.ahnyeongjun.outbox.adapter.jdbc.MySQLDialect;
 import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxDialect;
 import io.github.ahnyeongjun.outbox.adapter.jdbc.PostgreSQLDialect;
 import io.github.ahnyeongjun.outbox.adapter.jpa.HibernateOutboxListener;
-import io.github.ahnyeongjun.outbox.adapter.jpa.JpaOutboxStore;
 import io.github.ahnyeongjun.outbox.adapter.jpa.OutboxHibernateIntegrator;
 import io.github.ahnyeongjun.outbox.adapter.mybatis.OutboxInterceptor;
 import io.github.ahnyeongjun.outbox.capture.DefaultOutboxConverter;
@@ -64,32 +62,16 @@ public class OutboxAutoConfig {
     }
 
     /**
-     * 기본 저장소 — JDBC. {@code outbox.store-type=jdbc} 또는 미지정 시 등록 (기본값).
-     * 직접 {@link OutboxStore} 빈을 등록하면 이 빈은 건너뜀.
+     * 기본 저장소 — JDBC 기반. 직접 {@link OutboxStore} 빈을 등록하면 이 빈은 건너뜀.
+     *
+     * <p>JPA 프로젝트에서도 그대로 사용 가능 — {@code JdbcTemplate} 은 활성 트랜잭션의
+     * Connection 을 공유하므로 {@code JpaTransactionManager} 가 관리하는 비즈니스 트랜잭션에
+     * 자연스럽게 합류한다 (비즈니스 데이터와 outbox INSERT 가 한 commit 단위로 묶임).
      */
     @Bean
     @ConditionalOnMissingBean(OutboxStore.class)
-    @ConditionalOnProperty(prefix = "outbox", name = "store-type",
-                           havingValue = "jdbc", matchIfMissing = true)
-    public OutboxStore jdbcOutboxStore(NamedParameterJdbcTemplate jdbcTemplate, OutboxDialect dialect) {
+    public OutboxStore outboxStore(NamedParameterJdbcTemplate jdbcTemplate, OutboxDialect dialect) {
         return new JdbcOutboxStore(jdbcTemplate, dialect);
-    }
-
-    /**
-     * JPA 저장소 — {@code outbox.store-type=jpa} 설정 시 등록. EntityManager 필요.
-     * 직접 {@link OutboxStore} 빈을 등록하면 이 빈은 건너뜀.
-     */
-    @Configuration
-    @ConditionalOnClass(name = "jakarta.persistence.EntityManager")
-    @ConditionalOnBean(name = "entityManagerFactory")
-    @ConditionalOnProperty(prefix = "outbox", name = "store-type", havingValue = "jpa")
-    static class JpaStoreAutoConfig {
-
-        @Bean
-        @ConditionalOnMissingBean(OutboxStore.class)
-        public OutboxStore jpaOutboxStore(jakarta.persistence.EntityManager em) {
-            return new JpaOutboxStore(em);
-        }
     }
 
     @Bean

@@ -18,10 +18,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * JDBC 기반 {@link OutboxStore} 구현체.
+ * JDBC 기반 {@link OutboxStore} 구현체 — 본 모듈의 단일 표준 저장소.
  *
  * <p>락 전략: {@code SELECT ... FOR UPDATE SKIP LOCKED} (PostgreSQL/MySQL 공통).
  * 락 메커니즘은 외부에 노출되지 않으며 {@link #processBatch} 가 트랜잭션 안에서 모두 처리한다.
+ *
+ * <p><b>JPA/Hibernate 프로젝트에서도 그대로 사용</b>: {@code JdbcTemplate} 은 활성 트랜잭션의
+ * Connection 을 공유하므로 {@code JpaTransactionManager} 가 관리하는 비즈니스 트랜잭션에
+ * 자연스럽게 합류한다. JPA 비즈니스 INSERT 와 outbox INSERT 가 같은 커밋 단위로 묶여 원자적.
  */
 @Slf4j
 @RequiredArgsConstructor
