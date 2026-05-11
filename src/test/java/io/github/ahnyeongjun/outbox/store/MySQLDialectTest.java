@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.adapter.jdbc;
+package io.github.ahnyeongjun.outbox.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

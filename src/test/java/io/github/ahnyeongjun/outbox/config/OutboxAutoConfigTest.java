@@ -11,10 +11,10 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.github.ahnyeongjun.outbox.adapter.jdbc.JdbcOutboxStore;
-import io.github.ahnyeongjun.outbox.adapter.jdbc.MySQLDialect;
-import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxDialect;
-import io.github.ahnyeongjun.outbox.adapter.jdbc.PostgreSQLDialect;
+import io.github.ahnyeongjun.outbox.store.JdbcOutboxStore;
+import io.github.ahnyeongjun.outbox.store.MySQLDialect;
+import io.github.ahnyeongjun.outbox.store.OutboxDialect;
+import io.github.ahnyeongjun.outbox.store.PostgreSQLDialect;
 import io.github.ahnyeongjun.outbox.capture.DefaultOutboxConverter;
 import io.github.ahnyeongjun.outbox.capture.OutboxAspect;
 import io.github.ahnyeongjun.outbox.capture.OutboxEventFlusher;
@@ -121,7 +121,6 @@ class OutboxAutoConfigTest {
         @Override public void saveAll(java.util.List<Outbox> events) {}
         @Override public long countPending() { return 0; }
         @Override public int processBatch(
-                org.springframework.transaction.support.TransactionTemplate tx,
                 int limit,
                 java.util.function.Consumer<java.util.List<Outbox>> handler) { return 0; }
         @Override public void deleteOldSent() {}

@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.adapter.jdbc;
+package io.github.ahnyeongjun.outbox.store;
 
 import java.sql.Timestamp;
 import java.util.List;
@@ -9,12 +9,12 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.model.Outbox;
 import io.github.ahnyeongjun.outbox.spi.OutboxStore;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -28,11 +28,19 @@ import lombok.extern.slf4j.Slf4j;
  * 자연스럽게 합류한다. JPA 비즈니스 INSERT 와 outbox INSERT 가 같은 커밋 단위로 묶여 원자적.
  */
 @Slf4j
-@RequiredArgsConstructor
 public class JdbcOutboxStore implements OutboxStore {
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final OutboxDialect dialect;
+    private final TransactionTemplate tx;
+
+    public JdbcOutboxStore(NamedParameterJdbcTemplate jdbcTemplate,
+                            OutboxDialect dialect,
+                            PlatformTransactionManager transactionManager) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.dialect = dialect;
+        this.tx = new TransactionTemplate(transactionManager);
+    }
 
     private static final RowMapper<Outbox> ROW_MAPPER = (rs, rowNum) -> {
         long rawSeq = rs.getLong("seq");
@@ -72,7 +80,7 @@ public class JdbcOutboxStore implements OutboxStore {
     }
 
     @Override
-    public int processBatch(TransactionTemplate tx, int limit, Consumer<List<Outbox>> handler) {
+    public int processBatch(int limit, Consumer<List<Outbox>> handler) {
         Integer count = tx.execute(status -> {
             List<Outbox> batch = findPendingWithLock(limit);
             if (batch.isEmpty()) return 0;

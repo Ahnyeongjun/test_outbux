@@ -28,8 +28,8 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import io.github.ahnyeongjun.outbox.adapter.jdbc.JdbcOutboxStore;
-import io.github.ahnyeongjun.outbox.adapter.jdbc.PostgreSQLDialect;
+import io.github.ahnyeongjun.outbox.store.JdbcOutboxStore;
+import io.github.ahnyeongjun.outbox.store.PostgreSQLDialect;
 import io.github.ahnyeongjun.outbox.model.Outbox;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 
@@ -55,10 +55,12 @@ class PostgresLockConcurrencyTest {
         pg = EmbeddedPostgres.builder().start();
         dataSource = pg.getPostgresDatabase();
         jdbc = new JdbcTemplate(dataSource);
+        DataSourceTransactionManager txm = new DataSourceTransactionManager(dataSource);
         store = new JdbcOutboxStore(
                 new NamedParameterJdbcTemplate(dataSource),
-                new PostgreSQLDialect());
-        tx = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+                new PostgreSQLDialect(),
+                txm);
+        tx = new TransactionTemplate(txm);
 
         jdbc.execute("CREATE SEQUENCE IF NOT EXISTS outbox_seq_seq START 1");
         jdbc.execute("""
@@ -116,7 +118,7 @@ class PostgresLockConcurrencyTest {
                 futures.add(pool.submit(() -> {
                     int total = 0;
                     while (true) {
-                        int handled = store.processBatch(tx, batchSize, batch -> {
+                        int handled = store.processBatch(batchSize, batch -> {
                             for (Outbox o : batch) pickedAcrossWorkers.add(o.getId());
                         });
                         if (handled == 0) break;
@@ -159,7 +161,7 @@ class PostgresLockConcurrencyTest {
                 pickerFutures.add(pool.submit(() -> {
                     int emptyRoundsRemaining = 5;
                     while (emptyRoundsRemaining > 0) {
-                        int handled = store.processBatch(tx, batchSize, batch -> {
+                        int handled = store.processBatch(batchSize, batch -> {
                             // 핸들러 본문 — 실 운영에선 파일 쓰기/외부 전송 등
                         });
                         if (handled == 0) {
@@ -236,7 +238,7 @@ class PostgresLockConcurrencyTest {
     void processBatch_handlerException_marksFailedAndExcludesFromNextPickup() {
         insertPending(5);
 
-        int handled = store.processBatch(tx, 10, batch -> {
+        int handled = store.processBatch(10, batch -> {
             throw new RuntimeException("simulated handler failure");
         });
         assertThat(handled).isEqualTo(5);
@@ -246,7 +248,7 @@ class PostgresLockConcurrencyTest {
         assertThat(failed).isEqualTo(5);
 
         // 두 번째 픽업 — FAILED 는 PENDING 이 아니므로 빈 배치
-        int next = store.processBatch(tx, 10, batch -> {});
+        int next = store.processBatch(10, batch -> {});
         assertThat(next).isZero();
     }
 
@@ -258,13 +260,13 @@ class PostgresLockConcurrencyTest {
         insertPending(100);
 
         // 절반 미리 SENT 처리 후 sent_at 을 8일 전으로 → cleanup 대상화
-        store.processBatch(tx, 50, batch -> {});
+        store.processBatch(50, batch -> {});
         jdbc.update("UPDATE outbox SET sent_at = NOW() - INTERVAL '8 days' WHERE status = 'SENT'");
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             Future<?> cleanup = pool.submit(() -> { store.deleteOldSent(); return null; });
-            Future<?> pickup = pool.submit(() -> store.processBatch(tx, 100, batch -> {}));
+            Future<?> pickup = pool.submit(() -> store.processBatch(100, batch -> {}));
 
             cleanup.get(30, TimeUnit.SECONDS);
             pickup.get(30, TimeUnit.SECONDS);

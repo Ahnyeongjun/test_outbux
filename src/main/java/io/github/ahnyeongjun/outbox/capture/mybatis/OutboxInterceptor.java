@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.adapter.mybatis;
+package io.github.ahnyeongjun.outbox.capture.mybatis;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;

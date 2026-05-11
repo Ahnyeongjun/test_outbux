@@ -33,7 +33,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxDialect;
+import io.github.ahnyeongjun.outbox.store.OutboxDialect;
 import io.github.ahnyeongjun.outbox.publish.OutboxScheduler;
 
 /**

@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.adapter.jpa;
+package io.github.ahnyeongjun.outbox.capture.jpa;
 
 import org.hibernate.event.spi.PostDeleteEvent;
 import org.hibernate.event.spi.PostDeleteEventListener;

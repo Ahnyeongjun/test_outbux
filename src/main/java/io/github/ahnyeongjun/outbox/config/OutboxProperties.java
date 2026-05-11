@@ -21,8 +21,11 @@ public class OutboxProperties {
      */
     private Set<String> tables = Set.of();
 
-    /** SQL 방언. postgresql (기본) | mysql | mariadb */
-    private String dialect = "postgresql";
+    /**
+     * SQL 방언. 비워두면 DataSource URL 에서 자동 감지(postgresql/mysql/mariadb).
+     * 명시 시 우선 적용 — postgresql | mysql | mariadb 중 택일.
+     */
+    private String dialect;
 
     /** PostgreSQL 전용 시퀀스 이름 */
     private String sequenceName = "outbox_seq_seq";

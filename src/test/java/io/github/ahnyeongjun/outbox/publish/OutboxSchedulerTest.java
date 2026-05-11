@@ -17,8 +17,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
@@ -29,7 +27,6 @@ class OutboxSchedulerTest {
 
     @Mock OutboxStore store;
     @Mock OutboxFileWriter fileWriter;
-    @Mock PlatformTransactionManager txm;
 
     OutboxProperties properties;
     OutboxScheduler scheduler;
@@ -39,7 +36,7 @@ class OutboxSchedulerTest {
         properties = new OutboxProperties();
         properties.getBatch().setSize(10);
         properties.getBatch().setTimeTriggerMs(10 * 60 * 1000);
-        scheduler = new OutboxScheduler(properties, store, fileWriter, txm);
+        scheduler = new OutboxScheduler(properties, store, fileWriter);
     }
 
     @Test
@@ -48,43 +45,42 @@ class OutboxSchedulerTest {
 
         scheduler.processOutbox();
 
-        verify(store, never()).processBatch(any(), anyInt(), any());
+        verify(store, never()).processBatch(anyInt(), any());
     }
 
     @Test
     void sizeTrigger_delegatesToProcessBatchWithFileWriter() {
         when(store.countPending()).thenReturn(10L);
-        when(store.processBatch(any(), eq(10), any())).thenReturn(3);
+        when(store.processBatch(eq(10), any())).thenReturn(3);
 
         scheduler.processOutbox();
 
-        verify(store).processBatch(any(TransactionTemplate.class), eq(10), any());
+        verify(store).processBatch(eq(10), any());
     }
 
     @Test
     void timeTrigger_firesEvenIfPendingBelowSize() {
         properties.getBatch().setTimeTriggerMs(0L);
         when(store.countPending()).thenReturn(1L);
-        when(store.processBatch(any(), anyInt(), any())).thenReturn(1);
+        when(store.processBatch(anyInt(), any())).thenReturn(1);
 
         scheduler.processOutbox();
 
-        verify(store).processBatch(any(), eq(10), any());
+        verify(store).processBatch(eq(10), any());
     }
 
     @Test
     void handlerArgPassedToProcessBatch_isFileWriterWrite() {
         when(store.countPending()).thenReturn(10L);
-        when(store.processBatch(any(), anyInt(), any())).thenReturn(2);
+        when(store.processBatch(anyInt(), any())).thenReturn(2);
 
         scheduler.processOutbox();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Consumer<List<Outbox>>> handlerCaptor =
                 ArgumentCaptor.forClass(Consumer.class);
-        verify(store).processBatch(any(), anyInt(), handlerCaptor.capture());
+        verify(store).processBatch(anyInt(), handlerCaptor.capture());
 
-        // 캡처된 핸들러를 실행하면 OutboxFileWriter.write 가 호출되어야 함
         List<Outbox> dummyBatch = List.of(
                 Outbox.builder().id(1L).seq(1L).domain("USER")
                         .eventType("CREATED").source("INTERNAL").payload("{}").build()
@@ -102,11 +98,10 @@ class OutboxSchedulerTest {
     @Test
     void processBatch_zeroResult_doesNotThrow() {
         when(store.countPending()).thenReturn(10L);
-        when(store.processBatch(any(), anyInt(), any())).thenReturn(0);
+        when(store.processBatch(anyInt(), any())).thenReturn(0);
 
-        // empty batch → 아무 부작용 없이 종료
         assertThat(scheduler).isNotNull();
         scheduler.processOutbox();
-        verify(store).processBatch(any(), anyInt(), any());
+        verify(store).processBatch(anyInt(), any());
     }
 }

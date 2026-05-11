@@ -6,12 +6,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.spi.OutboxStore;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -22,24 +21,14 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class OutboxScheduler {
 
     private final OutboxProperties properties;
     private final OutboxStore outboxStore;
     private final OutboxFileWriter outboxFileWriter;
-    private final TransactionTemplate processBatchTx;
 
     private final AtomicReference<Instant> lastFlush = new AtomicReference<>(Instant.now());
-
-    public OutboxScheduler(OutboxProperties properties,
-                           OutboxStore outboxStore,
-                           OutboxFileWriter outboxFileWriter,
-                           PlatformTransactionManager transactionManager) {
-        this.properties = properties;
-        this.outboxStore = outboxStore;
-        this.outboxFileWriter = outboxFileWriter;
-        this.processBatchTx = new TransactionTemplate(transactionManager);
-    }
 
     @Scheduled(fixedDelayString = "${outbox.batch.check-interval-ms:5000}")
     public void processOutbox() {
@@ -51,7 +40,6 @@ public class OutboxScheduler {
         if (!timeTriggered && !sizeTriggered) return;
 
         int handled = outboxStore.processBatch(
-                processBatchTx,
                 properties.getBatch().getSize(),
                 outboxFileWriter::write
         );

@@ -29,7 +29,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.gatling.app.Gatling;
 import io.gatling.core.config.GatlingPropertiesBuilder;
-import io.github.ahnyeongjun.outbox.adapter.jdbc.OutboxDialect;
+import io.github.ahnyeongjun.outbox.store.OutboxDialect;
 import io.github.ahnyeongjun.outbox.publish.OutboxScheduler;
 
 /**

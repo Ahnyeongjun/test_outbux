@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.adapter.mybatis;
+package io.github.ahnyeongjun.outbox.capture.mybatis;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;

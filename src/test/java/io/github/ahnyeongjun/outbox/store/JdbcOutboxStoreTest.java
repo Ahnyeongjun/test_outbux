@@ -1,4 +1,4 @@
-package io.github.ahnyeongjun.outbox.adapter.jdbc;
+package io.github.ahnyeongjun.outbox.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -15,7 +15,6 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabase;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseBuilder;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseType;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.model.Outbox;
 
@@ -30,7 +29,6 @@ class JdbcOutboxStoreTest {
     private EmbeddedDatabase db;
     private JdbcOutboxStore store;
     private JdbcTemplate jdbc;
-    private TransactionTemplate tx;
 
     @BeforeEach
     void setUp() {
@@ -55,8 +53,8 @@ class JdbcOutboxStoreTest {
 
         store = new JdbcOutboxStore(
                 new NamedParameterJdbcTemplate((DataSource) db),
-                new H2TestDialect());
-        tx = new TransactionTemplate(new DataSourceTransactionManager(db));
+                new H2TestDialect(),
+                new DataSourceTransactionManager(db));
     }
 
     @Test
@@ -73,7 +71,7 @@ class JdbcOutboxStoreTest {
     void processBatch_handlerSuccess_marksSent() {
         store.saveAll(List.of(outbox("USER", "CREATED"), outbox("USER", "UPDATED")));
 
-        int handled = store.processBatch(tx, 10, batch -> { /* 정상 처리 */ });
+        int handled = store.processBatch(10, batch -> { /* 정상 처리 */ });
 
         assertThat(handled).isEqualTo(2);
         assertThat(store.countPending()).isZero();
@@ -86,7 +84,7 @@ class JdbcOutboxStoreTest {
     void processBatch_handlerThrows_marksFailed_andDoesNotPropagate() {
         store.saveAll(List.of(outbox("USER", "CREATED"), outbox("USER", "UPDATED")));
 
-        int handled = store.processBatch(tx, 10, batch -> {
+        int handled = store.processBatch(10, batch -> {
             throw new RuntimeException("disk full");
         });
 
@@ -101,7 +99,7 @@ class JdbcOutboxStoreTest {
     @Test
     void processBatch_emptyPending_returnsZero_withoutInvokingHandler() {
         boolean[] handlerCalled = {false};
-        int handled = store.processBatch(tx, 10, batch -> handlerCalled[0] = true);
+        int handled = store.processBatch(10, batch -> handlerCalled[0] = true);
 
         assertThat(handled).isZero();
         assertThat(handlerCalled[0]).isFalse();
@@ -116,7 +114,7 @@ class JdbcOutboxStoreTest {
         ));
 
         List<Integer> seenSizes = new ArrayList<>();
-        int handled = store.processBatch(tx, 2, batch -> seenSizes.add(batch.size()));
+        int handled = store.processBatch(2, batch -> seenSizes.add(batch.size()));
 
         assertThat(handled).isEqualTo(2);
         assertThat(seenSizes).containsExactly(2);
@@ -132,7 +130,7 @@ class JdbcOutboxStoreTest {
         ));
 
         List<String> seenEventTypes = new ArrayList<>();
-        store.processBatch(tx, 10, batch ->
+        store.processBatch(10, batch ->
                 batch.forEach(o -> seenEventTypes.add(o.getEventType())));
 
         assertThat(seenEventTypes).containsExactly("CREATED", "UPDATED", "DELETED");
