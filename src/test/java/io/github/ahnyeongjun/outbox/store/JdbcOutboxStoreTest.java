@@ -157,6 +157,35 @@ class JdbcOutboxStoreTest {
         assertThat(store.countPending()).isZero();
     }
 
+    @Test
+    void processBatch_handlerFailsAndMarkFailedAlsoFails_rowsStayPendingForRetry() {
+        // markFailed SQL 이 깨진 dialect 로 store 재구성 — handler 실패 + markFailed 실패 시나리오 시뮬
+        org.springframework.transaction.support.TransactionTemplate tx =
+                new org.springframework.transaction.support.TransactionTemplate(
+                        new org.springframework.jdbc.datasource.DataSourceTransactionManager((javax.sql.DataSource) db));
+        JdbcOutboxStore brokenStore = new JdbcOutboxStore(
+                new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate((javax.sql.DataSource) db),
+                new H2TestDialect() {
+                    @Override
+                    public String markFailedSql() {
+                        return "UPDATE outbox SET status='FAILED' WHERE non_existent_column = :id";
+                    }
+                },
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager((javax.sql.DataSource) db));
+
+        brokenStore.saveAll(List.of(outbox("USER", "CREATED"), outbox("USER", "UPDATED")));
+
+        // handler 실패 + markFailed 도 실패 → tx rollback → 예외 propagate
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () ->
+                brokenStore.processBatch(10, batch -> {
+                    throw new RuntimeException("disk full");
+                })
+        );
+
+        // tx rollback 으로 인해 row 들이 PENDING 상태로 유지 — 다음 사이클 재시도 가능
+        assertThat(brokenStore.countPending()).isEqualTo(2);
+    }
+
     private Outbox outbox(String domain, String eventType) {
         return Outbox.builder()
                 .domain(domain).eventType(eventType).source("INTERNAL").payload("{}")

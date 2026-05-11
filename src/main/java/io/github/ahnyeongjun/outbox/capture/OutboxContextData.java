@@ -11,6 +11,7 @@ public class OutboxContextData {
 
     private final List<Outbox> pendingEvents = new ArrayList<>();
     private boolean syncRegistered = false;
+    private boolean hibernateFlushHookRegistered = false;
     private boolean suppressed = false;
     private String customEventType = null;
 
@@ -20,6 +21,10 @@ public class OutboxContextData {
 
     public void markSyncRegistered() {
         this.syncRegistered = true;
+    }
+
+    public void markHibernateFlushHookRegistered() {
+        this.hibernateFlushHookRegistered = true;
     }
 
     public void suppress() {

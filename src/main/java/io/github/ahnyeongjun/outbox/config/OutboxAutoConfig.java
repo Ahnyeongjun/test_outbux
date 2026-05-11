@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -91,12 +92,16 @@ public class OutboxAutoConfig {
      * <p>JPA 프로젝트에서도 그대로 사용 가능 — {@code JdbcTemplate} 은 활성 트랜잭션의
      * Connection 을 공유하므로 {@code JpaTransactionManager} 가 관리하는 비즈니스 트랜잭션에
      * 자연스럽게 합류한다 (비즈니스 데이터와 outbox INSERT 가 한 commit 단위로 묶임).
+     *
+     * <p>{@code @Lazy} on PlatformTransactionManager: JPA 환경에서 {@code JpaTransactionManager}
+     * 가 EMF 에 의존 → EMF 생성이 우리 {@code HibernatePropertiesCustomizer} 를 평가 →
+     * customizer 가 listener → flusher → store → txm → EMF 로 순환 참조. Lazy proxy 로 끊는다.
      */
     @Bean
     @ConditionalOnMissingBean(OutboxStore.class)
     public OutboxStore outboxStore(NamedParameterJdbcTemplate jdbcTemplate,
                                     OutboxDialect dialect,
-                                    PlatformTransactionManager transactionManager) {
+                                    @Lazy PlatformTransactionManager transactionManager) {
         return new JdbcOutboxStore(jdbcTemplate, dialect, transactionManager);
     }
 
@@ -125,10 +130,17 @@ public class OutboxAutoConfig {
         }
     }
 
-    /** JPA/Hibernate 사용 환경의 <b>이벤트 캡처</b> 설정 — PostInsert/Update/Delete 이벤트 기반. */
+    /**
+     * JPA/Hibernate 사용 환경의 <b>이벤트 캡처</b> 설정 — PostInsert/Update/Delete 이벤트 기반.
+     *
+     * <p>{@code @ConditionalOnBean(name = "entityManagerFactory")} 는 의도적으로 사용하지 않는다.
+     * 이유: {@code HibernatePropertiesCustomizer} 빈은 {@code EntityManagerFactory} 가
+     * <em>생성되기 전에</em> 컨텍스트에 존재해야 Hibernate 가 customizer 를 적용하므로,
+     * EMF 빈 존재 조건으로 등록을 미루면 customizer 가 너무 늦게 등록되어 listener 가 붙지 않는다.
+     * Hibernate 클래스 존재만 확인하고, JPA 미사용 환경이면 customizer 가 호출되지 않을 뿐.
+     */
     @Configuration
     @ConditionalOnClass(name = "org.hibernate.event.spi.PostInsertEventListener")
-    @ConditionalOnBean(name = "entityManagerFactory")
     static class JpaCaptureConfig {
 
         @Bean

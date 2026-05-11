@@ -234,19 +234,21 @@ public class OrderItemOutboxConverter implements OutboxConverter {
 
 ## 커스텀 저장소
 
-기본 저장소는 JDBC(`JdbcOutboxStore`) 입니다. JPA 영속성 컨텍스트, R2DBC, 다중 DataSource 등 다른 영속성 기술을 사용하려면 `OutboxStore`(spi 패키지)를 구현해 빈으로 등록하면 자동 구성이 비활성화됩니다.
+기본 저장소는 JDBC (`JdbcOutboxStore`) 이며 JPA / MyBatis 어떤 ORM 프로젝트에서도 그대로 동작합니다 — `JdbcTemplate` 이 활성 트랜잭션의 Connection 을 공유하므로 비즈니스 tx 와 같은 commit 에 합류합니다.
+
+별도 영속성 기술(예: 다중 DataSource 라우팅, NoSQL 등)을 쓰려면 `OutboxStore`(spi 패키지)를 구현해 빈으로 등록하면 자동 구성이 비활성화됩니다.
 
 ```java
 @Component
-public class JpaOutboxStore implements OutboxStore {
+public class CustomOutboxStore implements OutboxStore {
     // void saveAll(List<Outbox>);
     // long countPending();
-    // List<Outbox> findPendingWithLock(int limit);
-    // void markSent(List<Outbox> batch);
-    // void markFailed(Long id);
+    // int processBatch(int limit, Consumer<List<Outbox>> handler);
     // void deleteOldSent();
 }
 ```
+
+> **권장 진입점**: 락+처리+마킹을 한 트랜잭션으로 묶는 `processBatch` 만 호출하면 됨. 락 메커니즘은 구현체가 캡슐화. 사용자는 비즈니스 의도(limit + handler) 만 신경 쓰면 됩니다.
 
 ---
 
@@ -315,6 +317,66 @@ public void applyFromClosedNet(OrderPayload payload) {
 | `FAILED` | 파일 쓰기 실패 |
 
 SENT 상태 레코드는 매일 02:00 (`cron = "0 0 2 * * *"`) 에 7일 초과분 자동 정리됩니다.
+
+---
+
+## ⚠️ 운영 주의 — seq 갭은 정상 동작
+
+**PostgreSQL 시퀀스(`NEXTVAL`)는 트랜잭션 롤백 시 소비된 값을 되돌리지 않습니다.** 따라서 outbox 의 `seq` 값에 빈 칸이 자연스럽게 발생합니다:
+
+```
+운영 중 정상 상태:
+seq = 1, 2, 3, 5, 8, 9, 12, ...
+       ↑     ↑     ↑↑      ← 4, 6, 7, 10, 11 은 롤백된 tx 의 자취
+```
+
+(MySQL 도 `AUTO_INCREMENT` 가 동일한 특성. id 가 seq 역할이라 같은 문제.)
+
+### 수신 서버 설계 권장사항
+
+| 잘못된 가정 | 올바른 접근 |
+|---|---|
+| "seq=N 다음은 N+1 가 와야 함" | seq 는 **단조 증가** 하지만 연속은 아님 |
+| seq 누락으로 누락 감지 | `created_at` 시간 윈도우로 감지 (예: "최근 30분간 새 이벤트 없음" 알람) |
+| seq 비교로 중복 판단 | `processed_seq` 테이블 + `INSERT ... ON CONFLICT DO NOTHING` 으로 멱등 처리 |
+| seq=마지막+1 대기 | 항상 `seq > last_processed_seq` 조건으로 새 이벤트 픽업 |
+
+### 수신측 멱등 처리 예시
+
+```sql
+-- 수신측 outbox 처리 로직
+BEGIN;
+
+-- 1. 중복 방지 (이미 처리한 seq 면 무시)
+INSERT INTO processed_seq (seq) VALUES (:seq) ON CONFLICT DO NOTHING;
+
+-- 2. 비즈니스 데이터 멱등 upsert
+INSERT INTO orders (id, name, updated_at) VALUES (:id, :name, :updatedAt)
+ON CONFLICT (id) DO UPDATE
+SET name = EXCLUDED.name, updated_at = EXCLUDED.updated_at
+WHERE orders.updated_at < EXCLUDED.updated_at;   -- 더 최신일 때만 덮어씀
+
+COMMIT;
+```
+
+같은 이벤트를 두 번 받아도 안전. seq 갭이 있어도 무관.
+
+### "정말 누락" 인지 어떻게 알지?
+
+운영 모니터링 (예시):
+
+```sql
+-- 최근 30분 동안 새 이벤트가 없으면 알람
+SELECT COUNT(*) FROM outbox
+WHERE created_at > NOW() - INTERVAL '30 minutes';
+-- 결과가 0 이면 발신측 문제 (수신측이 못 받는 게 아님)
+
+-- 발신측에 PENDING 이 30분 이상 정체되어 있으면 알람
+SELECT COUNT(*), MIN(created_at) FROM outbox
+WHERE status = 'PENDING' AND created_at < NOW() - INTERVAL '30 minutes';
+```
+
+→ **seq 연속성을 알람 기준으로 쓰지 말 것**.
 
 ---
 

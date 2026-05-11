@@ -1,5 +1,7 @@
 package io.github.ahnyeongjun.outbox.capture;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -84,11 +86,23 @@ public class OutboxEventFlusher {
 
     private void flushPending(OutboxContextData ctx) {
         if (!ctx.hasPendingEvents()) return;
+        // 방어적 복사 — clear() 가 호출자가 받은 리스트를 비우지 않도록.
+        // 이는 또한 두 번 호출되어도 두 번째 호출 시 pending 이 비어 no-op (idempotent) 이 되게 한다.
+        List<Outbox> snapshot = new ArrayList<>(ctx.getPendingEvents());
+        ctx.getPendingEvents().clear();
         try {
-            store.saveAll(ctx.getPendingEvents());
-            log.debug("Outbox flushed {} events", ctx.getPendingEvents().size());
+            store.saveAll(snapshot);
+            log.debug("Outbox flushed {} events", snapshot.size());
         } catch (Exception e) {
             log.error("Outbox flush failed: {}", e.getMessage(), e);
         }
+    }
+
+    /**
+     * Hibernate 의 {@code BeforeTransactionCompletionProcess} 같은 외부 훅에서 호출하는 공개 진입점.
+     * idempotent — 이벤트가 이미 비어있으면 no-op, 처리 후엔 리스트가 비워져 재호출되어도 안전.
+     */
+    public void flushAccumulatedEvents(OutboxContextData ctx) {
+        flushPending(ctx);
     }
 }

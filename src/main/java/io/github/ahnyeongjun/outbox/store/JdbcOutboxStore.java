@@ -87,9 +87,18 @@ public class JdbcOutboxStore implements OutboxStore {
             try {
                 handler.accept(batch);
                 markSent(batch);
-            } catch (RuntimeException e) {
-                log.error("Outbox processBatch handler failed: {}", e.getMessage(), e);
-                batch.forEach(o -> markFailed(o.getId()));
+            } catch (RuntimeException handlerError) {
+                log.error("Outbox processBatch handler failed; marking batch as FAILED: {}",
+                        handlerError.getMessage(), handlerError);
+                try {
+                    batch.forEach(o -> markFailed(o.getId()));
+                } catch (RuntimeException markError) {
+                    // markFailed 자체 실패 (DB 일시 장애 등) — tx rollback 시켜 rows 가 PENDING 으로
+                    // 남게 함. 다음 폴링에서 재시도 가능.
+                    log.error("Outbox markFailed itself failed — transaction will roll back, " +
+                            "rows stay PENDING for retry next cycle: {}", markError.getMessage(), markError);
+                    throw markError;
+                }
             }
             return batch.size();
         });
