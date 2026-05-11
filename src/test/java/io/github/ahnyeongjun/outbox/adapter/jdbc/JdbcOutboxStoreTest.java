@@ -2,6 +2,7 @@ package io.github.ahnyeongjun.outbox.adapter.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import javax.sql.DataSource;
@@ -10,21 +11,26 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabase;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseBuilder;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseType;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.model.Outbox;
 
 /**
- * H2 임베디드 DB 위에서 H2 호환 방언으로 JdbcOutboxStore 동작을 검증.
- * 실 PostgreSQL/MySQL 방언은 H2 와 호환되지 않으므로 별도 H2Dialect 를 정의해 사용한다.
+ * H2 임베디드 DB 위에서 JdbcOutboxStore 의 공개 SPI(saveAll, countPending, processBatch,
+ * deleteOldSent) 동작을 검증한다.
+ *
+ * <p>락 기제는 SPI 가 아니므로 직접 테스트하지 않고 {@code processBatch} 의 행위를 통해 본다.
  */
 class JdbcOutboxStoreTest {
 
     private EmbeddedDatabase db;
     private JdbcOutboxStore store;
     private JdbcTemplate jdbc;
+    private TransactionTemplate tx;
 
     @BeforeEach
     void setUp() {
@@ -50,60 +56,86 @@ class JdbcOutboxStoreTest {
         store = new JdbcOutboxStore(
                 new NamedParameterJdbcTemplate((DataSource) db),
                 new H2TestDialect());
+        tx = new TransactionTemplate(new DataSourceTransactionManager(db));
     }
 
     @Test
     void saveAll_insertsMultipleRowsAsPending() {
         store.saveAll(List.of(
-                Outbox.builder().domain("USER").eventType("CREATED").source("INTERNAL").payload("{\"a\":1}").build(),
-                Outbox.builder().domain("USER").eventType("UPDATED").source("INTERNAL").payload("{\"b\":2}").build()
+                outbox("USER", "CREATED"),
+                outbox("USER", "UPDATED")
         ));
 
         assertThat(store.countPending()).isEqualTo(2);
     }
 
     @Test
-    void findPendingWithLock_returnsLimitedRowsOrderedById() {
-        store.saveAll(List.of(
-                Outbox.builder().domain("USER").eventType("CREATED").source("INTERNAL").payload("{}").build(),
-                Outbox.builder().domain("USER").eventType("UPDATED").source("INTERNAL").payload("{}").build(),
-                Outbox.builder().domain("USER").eventType("DELETED").source("INTERNAL").payload("{}").build()
-        ));
+    void processBatch_handlerSuccess_marksSent() {
+        store.saveAll(List.of(outbox("USER", "CREATED"), outbox("USER", "UPDATED")));
 
-        List<Outbox> picked = store.findPendingWithLock(2);
+        int handled = store.processBatch(tx, 10, batch -> { /* 정상 처리 */ });
 
-        assertThat(picked).hasSize(2);
-        assertThat(picked.get(0).getEventType()).isEqualTo("CREATED");
-        assertThat(picked.get(1).getEventType()).isEqualTo("UPDATED");
-    }
-
-    @Test
-    void markSent_updatesStatusAndSentAt() {
-        store.saveAll(List.of(
-                Outbox.builder().domain("USER").eventType("CREATED").source("INTERNAL").payload("{}").build()
-        ));
-        List<Outbox> picked = store.findPendingWithLock(10);
-
-        store.markSent(picked);
-
+        assertThat(handled).isEqualTo(2);
         assertThat(store.countPending()).isZero();
         Long sentCount = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM outbox WHERE status = 'SENT' AND sent_at IS NOT NULL", Long.class);
-        assertThat(sentCount).isEqualTo(1);
+                "SELECT COUNT(*) FROM outbox WHERE status='SENT' AND sent_at IS NOT NULL", Long.class);
+        assertThat(sentCount).isEqualTo(2);
     }
 
     @Test
-    void markFailed_movesRowToFailedStatus() {
-        store.saveAll(List.of(
-                Outbox.builder().domain("USER").eventType("CREATED").source("INTERNAL").payload("{}").build()
-        ));
-        Long id = jdbc.queryForObject("SELECT MIN(id) FROM outbox", Long.class);
+    void processBatch_handlerThrows_marksFailed_andDoesNotPropagate() {
+        store.saveAll(List.of(outbox("USER", "CREATED"), outbox("USER", "UPDATED")));
 
-        store.markFailed(id);
+        int handled = store.processBatch(tx, 10, batch -> {
+            throw new RuntimeException("disk full");
+        });
 
-        String status = jdbc.queryForObject("SELECT status FROM outbox WHERE id = ?", String.class, id);
-        assertThat(status).isEqualTo("FAILED");
+        // 핸들러가 던져도 호출자엔 전파되지 않음 — 대신 FAILED 마킹 + 정상 반환
+        assertThat(handled).isEqualTo(2);
+        Long failedCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM outbox WHERE status='FAILED'", Long.class);
+        assertThat(failedCount).isEqualTo(2);
         assertThat(store.countPending()).isZero();
+    }
+
+    @Test
+    void processBatch_emptyPending_returnsZero_withoutInvokingHandler() {
+        boolean[] handlerCalled = {false};
+        int handled = store.processBatch(tx, 10, batch -> handlerCalled[0] = true);
+
+        assertThat(handled).isZero();
+        assertThat(handlerCalled[0]).isFalse();
+    }
+
+    @Test
+    void processBatch_respectsLimit() {
+        store.saveAll(List.of(
+                outbox("USER", "CREATED"),
+                outbox("USER", "UPDATED"),
+                outbox("USER", "DELETED")
+        ));
+
+        List<Integer> seenSizes = new ArrayList<>();
+        int handled = store.processBatch(tx, 2, batch -> seenSizes.add(batch.size()));
+
+        assertThat(handled).isEqualTo(2);
+        assertThat(seenSizes).containsExactly(2);
+        assertThat(store.countPending()).isEqualTo(1);
+    }
+
+    @Test
+    void processBatch_handlerReceivesEventsInOrder() {
+        store.saveAll(List.of(
+                outbox("USER", "CREATED"),
+                outbox("USER", "UPDATED"),
+                outbox("USER", "DELETED")
+        ));
+
+        List<String> seenEventTypes = new ArrayList<>();
+        store.processBatch(tx, 10, batch ->
+                batch.forEach(o -> seenEventTypes.add(o.getEventType())));
+
+        assertThat(seenEventTypes).containsExactly("CREATED", "UPDATED", "DELETED");
     }
 
     @Test
@@ -114,14 +146,12 @@ class JdbcOutboxStoreTest {
         jdbc.update("INSERT INTO outbox (domain, event_type, source, payload, status, created_at, sent_at) " +
                     "VALUES ('USER', 'CREATED', 'INTERNAL', '{}', 'SENT', CURRENT_TIMESTAMP, " +
                     "DATEADD('DAY', -1, CURRENT_TIMESTAMP))");
-        store.saveAll(List.of( // PENDING — 삭제 대상 아님
-                Outbox.builder().domain("USER").eventType("CREATED").source("INTERNAL").payload("{}").build()
-        ));
+        store.saveAll(List.of(outbox("USER", "CREATED")));
 
         store.deleteOldSent();
 
         Long total = jdbc.queryForObject("SELECT COUNT(*) FROM outbox", Long.class);
-        assertThat(total).isEqualTo(2); // 1일전 SENT + 1건 PENDING 만 남음
+        assertThat(total).isEqualTo(2);
     }
 
     @Test
@@ -129,20 +159,23 @@ class JdbcOutboxStoreTest {
         assertThat(store.countPending()).isZero();
     }
 
+    private Outbox outbox(String domain, String eventType) {
+        return Outbox.builder()
+                .domain(domain).eventType(eventType).source("INTERNAL").payload("{}")
+                .build();
+    }
+
     /** H2 호환 방언 (테스트 전용). */
     static class H2TestDialect implements OutboxDialect {
-        @Override
-        public String insertSql() {
+        @Override public String insertSql() {
             return "INSERT INTO outbox (domain, event_type, source, payload, status, created_at) " +
                    "VALUES (:domain, :eventType, :source, :payload, 'PENDING', CURRENT_TIMESTAMP)";
         }
-        @Override
-        public String selectPendingWithLockSql() {
-            return "SELECT id, seq, domain, event_type, source, payload, status, created_at, sent_at " +
+        @Override public String selectPendingWithLockSql() {
+            return "SELECT id, id AS seq, domain, event_type, source, payload, status, created_at, sent_at " +
                    "FROM outbox WHERE status = 'PENDING' ORDER BY id ASC LIMIT :limit";
         }
-        @Override
-        public String deleteOldSentSql() {
+        @Override public String deleteOldSentSql() {
             return "DELETE FROM outbox WHERE status = 'SENT' AND sent_at < DATEADD('DAY', -7, CURRENT_TIMESTAMP)";
         }
     }

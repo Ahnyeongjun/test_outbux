@@ -2,6 +2,7 @@ package io.github.ahnyeongjun.outbox.adapter.jdbc;
 
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.springframework.jdbc.core.RowMapper;
@@ -9,11 +10,20 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.model.Outbox;
 import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+/**
+ * JDBC 기반 {@link OutboxStore} 구현체.
+ *
+ * <p>락 전략: {@code SELECT ... FOR UPDATE SKIP LOCKED} (PostgreSQL/MySQL 공통).
+ * 락 메커니즘은 외부에 노출되지 않으며 {@link #processBatch} 가 트랜잭션 안에서 모두 처리한다.
+ */
+@Slf4j
 @RequiredArgsConstructor
 public class JdbcOutboxStore implements OutboxStore {
 
@@ -58,29 +68,43 @@ public class JdbcOutboxStore implements OutboxStore {
     }
 
     @Override
-    public List<Outbox> findPendingWithLock(int limit) {
-        return jdbcTemplate.query(
-                dialect.selectPendingWithLockSql(),
-                new MapSqlParameterSource("limit", limit),
-                ROW_MAPPER);
-    }
-
-    @Override
-    @Transactional
-    public void markSent(List<Outbox> batch) {
-        List<Long> ids = batch.stream().map(Outbox::getId).collect(Collectors.toList());
-        jdbcTemplate.update(dialect.markSentSql(), new MapSqlParameterSource("ids", ids));
-    }
-
-    @Override
-    @Transactional
-    public void markFailed(Long id) {
-        jdbcTemplate.update(dialect.markFailedSql(), new MapSqlParameterSource("id", id));
+    public int processBatch(TransactionTemplate tx, int limit, Consumer<List<Outbox>> handler) {
+        Integer count = tx.execute(status -> {
+            List<Outbox> batch = findPendingWithLock(limit);
+            if (batch.isEmpty()) return 0;
+            try {
+                handler.accept(batch);
+                markSent(batch);
+            } catch (RuntimeException e) {
+                log.error("Outbox processBatch handler failed: {}", e.getMessage(), e);
+                batch.forEach(o -> markFailed(o.getId()));
+            }
+            return batch.size();
+        });
+        return count == null ? 0 : count;
     }
 
     @Override
     @Transactional
     public void deleteOldSent() {
         jdbcTemplate.getJdbcTemplate().update(dialect.deleteOldSentSql());
+    }
+
+    // -------------------- 내부 (락 기제) — SPI 노출 안 함 --------------------
+
+    private List<Outbox> findPendingWithLock(int limit) {
+        return jdbcTemplate.query(
+                dialect.selectPendingWithLockSql(),
+                new MapSqlParameterSource("limit", limit),
+                ROW_MAPPER);
+    }
+
+    private void markSent(List<Outbox> batch) {
+        List<Long> ids = batch.stream().map(Outbox::getId).collect(Collectors.toList());
+        jdbcTemplate.update(dialect.markSentSql(), new MapSqlParameterSource("ids", ids));
+    }
+
+    private void markFailed(Long id) {
+        jdbcTemplate.update(dialect.markFailedSql(), new MapSqlParameterSource("id", id));
     }
 }

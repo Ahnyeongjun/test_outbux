@@ -234,9 +234,10 @@ public class OutboxBenchmarks {
     static class NoopStore implements OutboxStore {
         @Override public void saveAll(List<Outbox> events) {}
         @Override public long countPending() { return 0; }
-        @Override public List<Outbox> findPendingWithLock(int limit) { return List.of(); }
-        @Override public void markSent(List<Outbox> batch) {}
-        @Override public void markFailed(Long id) {}
+        @Override public int processBatch(
+                org.springframework.transaction.support.TransactionTemplate tx,
+                int limit,
+                java.util.function.Consumer<List<Outbox>> handler) { return 0; }
         @Override public void deleteOldSent() {}
     }
 }

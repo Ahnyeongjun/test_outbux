@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -33,17 +34,13 @@ import io.github.ahnyeongjun.outbox.model.Outbox;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 
 /**
- * 실제 PostgreSQL 위에서 락/동시성 동작 검증.
+ * 실제 PostgreSQL 위에서 락/동시성 동작 검증 — 공개 SPI({@code processBatch}) 만으로 진행.
  *
- * <p>Docker 없이 Zonky embedded-postgres 가 PG 바이너리를 받아 로컬에서 띄운다 (첫 실행 ~50MB).
+ * <p>저수준 락 메서드는 SPI 에서 제거됐으므로, 동시성 테스트도 사용자가 실제로 호출할 수 있는
+ * 인터페이스를 통해 검증한다. 이는 동시에 "{@code processBatch} 안에 락 의미론이 제대로 캡슐화돼
+ * 있는지" 까지 함께 검증하는 효과가 있다.
  *
- * <p>검증 시나리오:
- * <ul>
- *   <li>{@code FOR UPDATE SKIP LOCKED} 가 다중 워커에서 row 를 중복 분배하지 않는가
- *   <li>동시 markSent 가 잘 직렬화되는가
- *   <li>비즈니스 트랜잭션이 롤백되면 outbox INSERT 도 같이 롤백되는가 (원자성)
- *   <li>고부하 동시 INSERT × 동시 픽업 × cleanup 교차 시 deadlock 없는가
- * </ul>
+ * <p>Docker 없이 Zonky embedded-postgres 가 PG 바이너리를 받아 로컬에서 띄운다.
  */
 class PostgresLockConcurrencyTest {
 
@@ -63,9 +60,7 @@ class PostgresLockConcurrencyTest {
                 new PostgreSQLDialect());
         tx = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
 
-        jdbc.execute("""
-                CREATE SEQUENCE IF NOT EXISTS outbox_seq_seq START 1;
-                """);
+        jdbc.execute("CREATE SEQUENCE IF NOT EXISTS outbox_seq_seq START 1");
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS outbox (
                     id         BIGSERIAL   PRIMARY KEY,
@@ -102,62 +97,53 @@ class PostgresLockConcurrencyTest {
         store.saveAll(events);
     }
 
-    // -------------------- 1. SKIP LOCKED 중복 분배 방지 --------------------
+    // -------------------- 1. processBatch 동시 호출 중복 분배 방지 --------------------
 
     @Test
-    @DisplayName("4개 워커 × FOR UPDATE SKIP LOCKED → 같은 row 가 두 워커에 분배되지 않음")
-    void skipLocked_neverDistributesSameRowToMultipleWorkers() throws Exception {
+    @DisplayName("4개 워커가 동시에 processBatch 호출 → 같은 row 가 두 워커에 분배되지 않음")
+    void processBatch_concurrent_neverDistributesSameRowTwice() throws Exception {
         int totalRows = 200;
         int workers = 4;
         int batchSize = 30;
         insertPending(totalRows);
 
         ExecutorService pool = Executors.newFixedThreadPool(workers);
-        List<Future<List<Long>>> futures = new ArrayList<>();
+        ConcurrentLinkedQueue<Long> pickedAcrossWorkers = new ConcurrentLinkedQueue<>();
+        List<Future<Integer>> futures = new ArrayList<>();
 
         try {
             for (int w = 0; w < workers; w++) {
                 futures.add(pool.submit(() -> {
-                    List<Long> picked = new ArrayList<>();
+                    int total = 0;
                     while (true) {
-                        // OutboxScheduler.processOutbox 와 동일한 패턴 — pick + markSent 를 같은 tx 에 묶어
-                        // 락이 유지되는 동안 SENT 마킹 완료. 별도 tx 로 쪼개면 락이 풀려 race 발생.
-                        List<Outbox> batch = tx.execute(s -> {
-                            List<Outbox> got = store.findPendingWithLock(batchSize);
-                            if (!got.isEmpty()) store.markSent(got);
-                            return got;
+                        int handled = store.processBatch(tx, batchSize, batch -> {
+                            for (Outbox o : batch) pickedAcrossWorkers.add(o.getId());
                         });
-                        if (batch.isEmpty()) break;
-                        batch.forEach(o -> picked.add(o.getId()));
+                        if (handled == 0) break;
+                        total += handled;
                     }
-                    return picked;
+                    return total;
                 }));
             }
 
-            Set<Long> all = new HashSet<>();
             int collected = 0;
-            for (Future<List<Long>> f : futures) {
-                List<Long> ids = f.get(60, TimeUnit.SECONDS);
-                collected += ids.size();
-                for (Long id : ids) {
-                    assertThat(all.add(id))
-                            .as("워커 간 row id %d 중복 분배 — SKIP LOCKED 위반", id)
-                            .isTrue();
-                }
-            }
+            for (Future<Integer> f : futures) collected += f.get(60, TimeUnit.SECONDS);
 
             assertThat(collected).as("모든 row 가 정확히 한 번씩 처리").isEqualTo(totalRows);
+
+            Set<Long> deduped = new HashSet<>(pickedAcrossWorkers);
+            assertThat(deduped).as("워커 간 row 중복 없음").hasSize(totalRows);
             assertThat(store.countPending()).isZero();
         } finally {
             pool.shutdownNow();
         }
     }
 
-    // -------------------- 2. 동시 INSERT × 동시 픽업 × markSent 데드락 부재 --------------------
+    // -------------------- 2. 동시 saveAll × 동시 processBatch deadlock 부재 --------------------
 
     @Test
-    @DisplayName("동시 INSERT + 동시 픽업 + 동시 markSent 가 교차해도 deadlock 없이 완료")
-    void noDeadlock_underHighConcurrentInsertPickupMarkSent() throws Exception {
+    @DisplayName("동시 saveAll + 동시 processBatch 가 교차해도 deadlock 없이 완료")
+    void noDeadlock_underHighConcurrentSaveAndProcess() throws Exception {
         int writers = 4;
         int pickers = 2;
         int writesPerWriter = 100;
@@ -167,31 +153,28 @@ class PostgresLockConcurrencyTest {
         AtomicInteger consumed = new AtomicInteger();
 
         try {
-            // 픽업 워커: 폴링하며 보이는 모든 PENDING 처리. writes 끝나면 자연 종료.
+            // 픽업 워커
             List<Future<?>> pickerFutures = new ArrayList<>();
             for (int p = 0; p < pickers; p++) {
                 pickerFutures.add(pool.submit(() -> {
-                    long emptyRoundsRemaining = 5;
+                    int emptyRoundsRemaining = 5;
                     while (emptyRoundsRemaining > 0) {
-                        // pick + markSent 같은 tx (락 유지)
-                        List<Outbox> batch = tx.execute(s -> {
-                            List<Outbox> got = store.findPendingWithLock(batchSize);
-                            if (!got.isEmpty()) store.markSent(got);
-                            return got;
+                        int handled = store.processBatch(tx, batchSize, batch -> {
+                            // 핸들러 본문 — 실 운영에선 파일 쓰기/외부 전송 등
                         });
-                        if (batch.isEmpty()) {
+                        if (handled == 0) {
                             emptyRoundsRemaining--;
                             try { Thread.sleep(30); } catch (InterruptedException e) { return null; }
                             continue;
                         }
                         emptyRoundsRemaining = 5;
-                        consumed.addAndGet(batch.size());
+                        consumed.addAndGet(handled);
                     }
                     return null;
                 }));
             }
 
-            // 쓰기 워커: 한 트랜잭션당 1건 INSERT (실 비즈니스 시뮬)
+            // 쓰기 워커 — 한 트랜잭션당 1건 INSERT
             List<Future<?>> writerFutures = new ArrayList<>();
             for (int w = 0; w < writers; w++) {
                 final int wid = w;
@@ -232,7 +215,6 @@ class PostgresLockConcurrencyTest {
     void saveAll_rollsBackWithOuterTransaction() {
         long before = store.countPending();
 
-        // 외부 tx 내에서 saveAll 호출 후 강제 롤백
         tx.execute(new TransactionCallbackWithoutResult() {
             @Override
             protected void doInTransactionWithoutResult(TransactionStatus status) {
@@ -244,57 +226,51 @@ class PostgresLockConcurrencyTest {
             }
         });
 
-        assertThat(store.countPending())
-                .as("외부 tx 가 롤백되면 saveAll 결과도 함께 사라져야 함 (REQUIRED 전파)")
-                .isEqualTo(before);
+        assertThat(store.countPending()).isEqualTo(before);
     }
 
-    // -------------------- 4. cleanup 과 동시 픽업 — markSent 후 즉시 deleteOldSent 도 안전 --------------------
+    // -------------------- 4. 핸들러 예외 → FAILED 마킹 + 후속 픽업에서 제외 --------------------
 
     @Test
-    @DisplayName("markSent 직후 deleteOldSent 가 동시에 돌아도 race 없이 안전")
-    void cleanUpAndMarkSent_doNotRaceOrDeadlock() throws Exception {
+    @DisplayName("processBatch 핸들러 예외 시 배치 전체가 FAILED 로 마킹되어 다음 픽업에서 제외")
+    void processBatch_handlerException_marksFailedAndExcludesFromNextPickup() {
+        insertPending(5);
+
+        int handled = store.processBatch(tx, 10, batch -> {
+            throw new RuntimeException("simulated handler failure");
+        });
+        assertThat(handled).isEqualTo(5);
+
+        Long failed = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM outbox WHERE status='FAILED'", Long.class);
+        assertThat(failed).isEqualTo(5);
+
+        // 두 번째 픽업 — FAILED 는 PENDING 이 아니므로 빈 배치
+        int next = store.processBatch(tx, 10, batch -> {});
+        assertThat(next).isZero();
+    }
+
+    // -------------------- 5. cleanup 과 동시 픽업 안전성 --------------------
+
+    @Test
+    @DisplayName("deleteOldSent 가 동시 진행되는 processBatch 와 race 없이 안전")
+    void cleanUpAndProcessBatch_doNotRace() throws Exception {
         insertPending(100);
 
-        // 먼저 절반을 SENT 로 표시하고 sent_at 을 8 일 전으로 만들어 cleanup 대상으로 만듦
-        tx.execute(new TransactionCallbackWithoutResult() {
-            @Override
-            protected void doInTransactionWithoutResult(TransactionStatus status) {
-                List<Outbox> half = store.findPendingWithLock(50);
-                store.markSent(half);
-            }
-        });
+        // 절반 미리 SENT 처리 후 sent_at 을 8일 전으로 → cleanup 대상화
+        store.processBatch(tx, 50, batch -> {});
         jdbc.update("UPDATE outbox SET sent_at = NOW() - INTERVAL '8 days' WHERE status = 'SENT'");
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
-            // 동시에 cleanup × pickup 진행
-            Future<?> cleanup = pool.submit(() -> {
-                tx.execute(new TransactionCallbackWithoutResult() {
-                    @Override
-                    protected void doInTransactionWithoutResult(TransactionStatus status) {
-                        store.deleteOldSent();
-                    }
-                });
-                return null;
-            });
-            Future<?> pickup = pool.submit(() -> {
-                tx.execute(new TransactionCallbackWithoutResult() {
-                    @Override
-                    protected void doInTransactionWithoutResult(TransactionStatus status) {
-                        List<Outbox> rest = store.findPendingWithLock(100);
-                        store.markSent(rest);
-                    }
-                });
-                return null;
-            });
+            Future<?> cleanup = pool.submit(() -> { store.deleteOldSent(); return null; });
+            Future<?> pickup = pool.submit(() -> store.processBatch(tx, 100, batch -> {}));
 
             cleanup.get(30, TimeUnit.SECONDS);
             pickup.get(30, TimeUnit.SECONDS);
 
             long total = jdbc.queryForObject("SELECT COUNT(*) FROM outbox", Long.class);
-            // 50건 cleanup, 50건 SENT 남음
-            assertThat(total).isEqualTo(50);
+            assertThat(total).isEqualTo(50);  // 50건 cleanup, 50건 SENT 남음
             assertThat(store.countPending()).isZero();
         } finally {
             pool.shutdownNow();

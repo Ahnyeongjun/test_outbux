@@ -120,9 +120,10 @@ class OutboxAutoConfigTest {
     static class CustomStore implements OutboxStore {
         @Override public void saveAll(java.util.List<Outbox> events) {}
         @Override public long countPending() { return 0; }
-        @Override public java.util.List<Outbox> findPendingWithLock(int limit) { return java.util.List.of(); }
-        @Override public void markSent(java.util.List<Outbox> batch) {}
-        @Override public void markFailed(Long id) {}
+        @Override public int processBatch(
+                org.springframework.transaction.support.TransactionTemplate tx,
+                int limit,
+                java.util.function.Consumer<java.util.List<Outbox>> handler) { return 0; }
         @Override public void deleteOldSent() {}
     }
 
