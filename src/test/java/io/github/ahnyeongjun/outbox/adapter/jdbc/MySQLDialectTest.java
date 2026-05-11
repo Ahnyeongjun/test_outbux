@@ -18,9 +18,12 @@ class MySQLDialectTest {
     }
 
     @Test
-    void selectPendingWithLockSql_aliasesSeqAsNull_orderById() {
+    void selectPendingWithLockSql_aliasesIdAsSeq_orderById() {
+        // OutboxFileWriter 가 long seqFrom = batch.get(0).getSeq() 로 unbox 하므로
+        // null 이면 NPE — id 를 seq 로 alias 해서 항상 채워준다.
         String sql = dialect.selectPendingWithLockSql();
-        assertThat(sql).contains("NULL AS seq");
+        assertThat(sql).contains("id AS seq");
+        assertThat(sql).doesNotContain("NULL AS seq");
         assertThat(sql).contains("ORDER BY id ASC");
         assertThat(sql).contains("LIMIT :limit");
         assertThat(sql).contains("FOR UPDATE SKIP LOCKED");

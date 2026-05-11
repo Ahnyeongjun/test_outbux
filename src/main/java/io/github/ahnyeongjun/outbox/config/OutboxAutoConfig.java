@@ -3,6 +3,7 @@ package io.github.ahnyeongjun.outbox.config;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -33,6 +34,7 @@ import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 @Configuration
 @EnableScheduling
 @EnableConfigurationProperties(OutboxProperties.class)
+@AutoConfigureBefore(name = "org.mybatis.spring.boot.autoconfigure.MybatisAutoConfiguration")
 @ComponentScan(value = "io.github.ahnyeongjun.outbox",
                excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE,
                                                       classes = OutboxAspect.class))
@@ -73,13 +75,19 @@ public class OutboxAutoConfig {
         return new OutboxEventFlusher(outboxStore, properties, converters);
     }
 
-    /** MyBatis 사용 환경 — Executor.update() 인터셉트 기반 자동 이벤트 캡처 */
+    /**
+     * MyBatis 사용 환경 — Executor.update() 인터셉트 기반 자동 이벤트 캡처.
+     *
+     * <p>{@code @ConditionalOnBean(name = "sqlSessionFactory")} 를 걸면 SqlSessionFactory 가
+     * <em>먼저</em> 만들어진 후에야 본 인터셉터 빈이 생성되어, MybatisAutoConfiguration 이
+     * 이미 만들어 둔 SqlSessionFactory 에 플러그인이 적용되지 않는다. 따라서 클래스 존재 여부만
+     * 조건으로 두고 {@link AutoConfigureBefore} 로 MybatisAutoConfiguration 보다 먼저 처리되게 한다.
+     */
     @Configuration
     @ConditionalOnClass(name = "org.apache.ibatis.plugin.Interceptor")
     static class MyBatisOutboxConfig {
 
         @Bean
-        @ConditionalOnBean(name = "sqlSessionFactory")
         public OutboxInterceptor outboxInterceptor(OutboxEventFlusher flusher) {
             return new OutboxInterceptor(flusher);
         }
