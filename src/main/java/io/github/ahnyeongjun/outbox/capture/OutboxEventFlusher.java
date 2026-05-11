@@ -64,7 +64,7 @@ public class OutboxEventFlusher {
         if (ctx.isSyncRegistered()) return;
 
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            flush(ctx);
+            flushPending(ctx);
             OutboxContext.clear();
             return;
         }
@@ -72,7 +72,7 @@ public class OutboxEventFlusher {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void beforeCommit(boolean readOnly) {
-                if (!readOnly) flush(ctx);
+                if (!readOnly) flushPending(ctx);
             }
             @Override
             public void afterCompletion(int status) {
@@ -82,7 +82,7 @@ public class OutboxEventFlusher {
         ctx.markSyncRegistered();
     }
 
-    private void flush(OutboxContextData ctx) {
+    private void flushPending(OutboxContextData ctx) {
         if (!ctx.hasPendingEvents()) return;
         try {
             store.saveAll(ctx.getPendingEvents());

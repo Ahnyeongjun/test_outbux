@@ -7,6 +7,7 @@ import org.hibernate.event.spi.PostInsertEventListener;
 import org.hibernate.event.spi.PostUpdateEvent;
 import org.hibernate.event.spi.PostUpdateEventListener;
 import org.hibernate.persister.entity.EntityPersister;
+import org.hibernate.persister.entity.Joinable;
 
 import io.github.ahnyeongjun.outbox.capture.OutboxEventFlusher;
 import lombok.RequiredArgsConstructor;
@@ -24,21 +25,26 @@ public class HibernateOutboxListener
 
     @Override
     public void onPostInsert(PostInsertEvent event) {
-        flusher.capture(event.getPersister().getTableName(), event.getEntity(), "CREATED");
+        flusher.capture(tableName(event.getPersister()), event.getEntity(), "CREATED");
     }
 
     @Override
     public void onPostUpdate(PostUpdateEvent event) {
-        flusher.capture(event.getPersister().getTableName(), event.getEntity(), "UPDATED");
+        flusher.capture(tableName(event.getPersister()), event.getEntity(), "UPDATED");
     }
 
     @Override
     public void onPostDelete(PostDeleteEvent event) {
-        flusher.capture(event.getPersister().getTableName(), event.getEntity(), "DELETED");
+        flusher.capture(tableName(event.getPersister()), event.getEntity(), "DELETED");
     }
 
     @Override
     public boolean requiresPostCommitHandling(EntityPersister persister) {
         return false;
+    }
+
+    /** Hibernate 6 에서 {@code EntityPersister.getTableName()} 이 제거되어 {@link Joinable} 캐스팅으로 우회. */
+    private static String tableName(EntityPersister persister) {
+        return ((Joinable) persister).getTableName();
     }
 }
