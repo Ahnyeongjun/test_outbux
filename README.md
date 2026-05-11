@@ -114,25 +114,28 @@ CREATE TABLE IF NOT EXISTS processed_seq (
 
 ```yaml
 outbox:
-  # 감시할 테이블 목록 (스키마 prefix 제외, 소문자 비교)
+  # 필수 — 감시할 테이블 목록 (스키마 prefix 제외, 소문자 비교)
   tables:
     - user
     - order_item
     - product_category
 
-  dialect: postgresql            # postgresql(기본) | mysql | mariadb
-  sequence-name: outbox_seq_seq  # PostgreSQL 시퀀스명 (기본값)
-
+  # 필수 — gzip 파일 저장 경로 (기본값은 Windows 경로라 운영 환경에선 반드시 지정)
   file:
-    path: /data/outbox           # gzip 파일 저장 경로 (기본값: D:/files/outbox)
+    path: /data/outbox
 
-  batch:
-    size: 1000              # 건수 트리거 임계값 (기본값: 1000)
-    time-trigger-ms: 60000  # 시간 트리거 간격 ms (기본값: 60_000)
-    check-interval-ms: 5000 # 스케줄러 폴링 간격 ms (기본값: 5_000)
+  # 선택 — 미지정 시 DataSource URL 에서 자동 감지 (postgresql | mysql | mariadb)
+  # dialect: postgresql
+  # sequence-name: outbox_seq_seq   # PostgreSQL 시퀀스명 (기본값)
+
+  # 선택 — 배치 트리거 (모두 기본값 합리적)
+  # batch:
+  #   size: 1000              # 건수 트리거 임계값
+  #   time-trigger-ms: 60000  # 시간 트리거 간격 (60초)
+  #   check-interval-ms: 5000 # 스케줄러 폴링 간격 (5초)
 ```
 
-> 기본 `outbox.file.path` 가 Windows 절대경로(`D:/files/outbox`) 이므로 운영 환경에서는 반드시 명시적으로 지정하세요.
+> **dialect 자동 감지**: `spring.datasource.url` 이 `jdbc:postgresql:` / `jdbc:mysql:` / `jdbc:mariadb:` 로 시작하면 자동으로 해당 방언 선택. 감지 실패 시 `postgresql` 폴백. 명시 설정은 우선 적용.
 
 ---
 
@@ -249,7 +252,7 @@ public class JpaOutboxStore implements OutboxStore {
 
 ## 커스텀 SQL 방언
 
-`outbox.dialect` 프로퍼티(`postgresql` / `mysql` / `mariadb`) 로 내장 방언을 선택할 수 있으며, 직접 `OutboxDialect` 빈을 등록하면 자동 구성이 비활성화됩니다.
+기본은 DataSource URL 에서 자동 감지(postgresql/mysql/mariadb). `outbox.dialect` 프로퍼티로 명시 override 가능. 직접 `OutboxDialect` 빈을 등록하면 자동 구성이 비활성화됩니다.
 
 ```java
 @Component
@@ -353,12 +356,17 @@ ORDER BY id  ASC LIMIT :limit FOR UPDATE SKIP LOCKED
 io.github.ahnyeongjun.outbox
 ├── annotation     @OutboxDomain, @OutboxEvent
 ├── capture        OutboxAspect, OutboxContext, OutboxEventFlusher, DefaultOutboxConverter
-├── adapter
-│   ├── jdbc       JdbcOutboxStore, OutboxDialect, PostgreSQLDialect, MySQLDialect
-│   ├── mybatis    OutboxInterceptor
-│   └── jpa        HibernateOutboxListener, OutboxHibernateIntegrator
+│   ├── mybatis    OutboxInterceptor                          (이벤트 캡처 — MyBatis)
+│   └── jpa        HibernateOutboxListener, OutboxHibernateIntegrator  (이벤트 캡처 — JPA)
+├── store          JdbcOutboxStore, OutboxDialect, PostgreSQLDialect, MySQLDialect
 ├── publish        OutboxScheduler, OutboxFileWriter
 ├── model          Outbox, OutboxStatus
 ├── spi            OutboxStore, OutboxConverter   ← 사용자 확장 포인트
 └── config         OutboxAutoConfig, OutboxProperties
 ```
+
+**책임별로 분리**:
+- `capture/*` — "어떻게 outbox 이벤트를 잡아내는가" (MyBatis 인터셉터 / JPA Hibernate 리스너)
+- `store/` — "어디에/어떻게 영속화하는가" (JDBC + dialect)
+- `publish/` — "outbox 를 어떻게 외부로 내보내는가" (스케줄러 + gzip 파일)
+- `spi/` — 사용자 확장 인터페이스 (커스텀 컨버터/스토어)
