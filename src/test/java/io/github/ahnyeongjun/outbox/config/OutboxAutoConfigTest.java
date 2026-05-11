@@ -7,8 +7,6 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -26,7 +24,7 @@ import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 /**
  * <p>주의: 이 테스트 클래스의 내부 클래스 중 {@code @Configuration} 또는 {@code @Component} 가
  * 붙은 것은 두지 말 것 — {@code OutboxAutoConfig} 의 {@code @ComponentScan("io.github.ahnyeongjun.outbox")}
- * 가 테스트 패키지까지 스캔하므로 자동 등록되어 다른 테스트를 오염시킨다.
+ * 가 테스트 패키지까지 스캔하므로 자동 등록되어 다른 테스트(특히 {@code @SpringBootTest} 컨텍스트)를 오염시킨다.
  * 사용자 빈 주입은 {@code withBean(...)} 으로만 한다.
  */
 class OutboxAutoConfigTest {
@@ -36,7 +34,7 @@ class OutboxAutoConfigTest {
                     DataSourceAutoConfiguration.class,
                     JdbcTemplateAutoConfiguration.class,
                     OutboxAutoConfig.class))
-            .withUserConfiguration(ObjectMapperConfig.class)
+            .withBean(ObjectMapper.class, ObjectMapper::new)
             .withPropertyValues(
                     "spring.datasource.url=jdbc:h2:mem:autoconfig;DB_CLOSE_DELAY=-1",
                     "spring.datasource.driver-class-name=org.h2.Driver",
@@ -109,11 +107,6 @@ class OutboxAutoConfigTest {
                 .withBean("defaultOutboxConverter", OutboxConverter.class, CustomConverter::new)
                 .run(ctx -> assertThat(ctx.getBean("defaultOutboxConverter"))
                         .isInstanceOf(CustomConverter.class));
-    }
-
-    @Configuration
-    static class ObjectMapperConfig {
-        @Bean ObjectMapper objectMapper() { return new ObjectMapper(); }
     }
 
     static class CustomDialect implements OutboxDialect {
