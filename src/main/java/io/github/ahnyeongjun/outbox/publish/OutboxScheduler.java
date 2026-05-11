@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
+import io.github.ahnyeongjun.outbox.observability.OutboxMetrics;
 import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +30,11 @@ public class OutboxScheduler {
     private final OutboxFileWriter outboxFileWriter;
 
     private final AtomicReference<Instant> lastFlush = new AtomicReference<>(Instant.now());
+    private OutboxMetrics metrics;
+
+    public void setMetrics(OutboxMetrics metrics) {
+        this.metrics = metrics;
+    }
 
     @Scheduled(fixedDelayString = "${outbox.batch.check-interval-ms:5000}")
     public void processOutbox() {
@@ -39,11 +45,17 @@ public class OutboxScheduler {
 
         if (!timeTriggered && !sizeTriggered) return;
 
+        if (metrics != null) metrics.recordTrigger(timeTriggered, sizeTriggered);
+
+        long start = System.nanoTime();
         int handled = outboxStore.processBatch(
                 properties.getBatch().getSize(),
                 outboxFileWriter::write
         );
+        long duration = System.nanoTime() - start;
         lastFlush.set(Instant.now());
+
+        if (metrics != null) metrics.recordBatch(duration, handled);
 
         if (handled > 0) {
             log.info("Outbox processed {} events (time={}, size={})", handled, timeTriggered, sizeTriggered);

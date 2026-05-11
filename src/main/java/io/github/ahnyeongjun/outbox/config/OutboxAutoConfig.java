@@ -30,6 +30,10 @@ import io.github.ahnyeongjun.outbox.capture.mybatis.OutboxInterceptor;
 import io.github.ahnyeongjun.outbox.capture.DefaultOutboxConverter;
 import io.github.ahnyeongjun.outbox.capture.OutboxAspect;
 import io.github.ahnyeongjun.outbox.capture.OutboxEventFlusher;
+import io.github.ahnyeongjun.outbox.observability.OutboxMetrics;
+import io.github.ahnyeongjun.outbox.publish.OutboxFileWriter;
+import io.github.ahnyeongjun.outbox.publish.OutboxScheduler;
+import io.github.ahnyeongjun.outbox.store.JdbcOutboxStore;
 import io.github.ahnyeongjun.outbox.spi.OutboxConverter;
 import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 
@@ -110,6 +114,33 @@ public class OutboxAutoConfig {
                                                   OutboxProperties properties,
                                                   Map<String, OutboxConverter> converters) {
         return new OutboxEventFlusher(outboxStore, properties, converters);
+    }
+
+    /**
+     * Micrometer 메트릭 — Spring Boot 가 {@code MeterRegistry} 를 제공하는 경우만 등록 (기본 제공).
+     * Prometheus/Datadog/CloudWatch 등 backend 는 사용자가 {@code micrometer-registry-*} 의존성
+     * + Actuator 추가로 선택. 본 라이브러리는 측정점만 노출.
+     */
+    @Configuration
+    @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    @ConditionalOnBean(io.micrometer.core.instrument.MeterRegistry.class)
+    static class MetricsConfig {
+
+        @Bean
+        public OutboxMetrics outboxMetrics(io.micrometer.core.instrument.MeterRegistry registry,
+                                            OutboxStore outboxStore,
+                                            OutboxEventFlusher flusher,
+                                            OutboxFileWriter fileWriter,
+                                            OutboxScheduler scheduler) {
+            OutboxMetrics metrics = new OutboxMetrics(registry, outboxStore);
+            flusher.setMetrics(metrics);
+            fileWriter.setMetrics(metrics);
+            scheduler.setMetrics(metrics);
+            if (outboxStore instanceof JdbcOutboxStore jdbcStore) {
+                jdbcStore.setMetrics(metrics);
+            }
+            return metrics;
+        }
     }
 
     /**

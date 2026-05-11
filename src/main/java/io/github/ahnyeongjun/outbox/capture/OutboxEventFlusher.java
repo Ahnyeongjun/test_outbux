@@ -9,6 +9,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
+import io.github.ahnyeongjun.outbox.observability.OutboxMetrics;
 import io.github.ahnyeongjun.outbox.spi.OutboxConverter;
 import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,12 @@ public class OutboxEventFlusher {
     private final OutboxStore store;
     private final OutboxProperties properties;
     private final Map<String, OutboxConverter> converters;
+    /** Nullable — Micrometer 이 classpath 에 없거나 비활성이면 null. */
+    private OutboxMetrics metrics;
+
+    public void setMetrics(OutboxMetrics metrics) {
+        this.metrics = metrics;
+    }
 
     /** 프레임워크별 캡처 진입점 — 테이블명 기반 자동 감지·저장 */
     public void capture(String rawTableName, Object entity, String defaultEventType) {
@@ -49,6 +56,7 @@ public class OutboxEventFlusher {
         }
 
         enqueue(ctx, converter.convert(entity, domain, eventType));
+        if (metrics != null) metrics.recordCaptured(domain, eventType);
     }
 
     /** OutboxContext 에 이벤트 적재 후 트랜잭션 동기화 등록 */

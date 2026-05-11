@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.github.ahnyeongjun.outbox.config.OutboxProperties;
 import io.github.ahnyeongjun.outbox.model.Outbox;
+import io.github.ahnyeongjun.outbox.observability.OutboxMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -36,6 +37,11 @@ public class OutboxFileWriter {
 
     private final OutboxProperties properties;
     private final ObjectMapper objectMapper;
+    private OutboxMetrics metrics;
+
+    public void setMetrics(OutboxMetrics metrics) {
+        this.metrics = metrics;
+    }
 
     public String write(List<Outbox> batch) {
         long seqFrom = batch.get(0).getSeq();
@@ -48,8 +54,13 @@ public class OutboxFileWriter {
 
         try {
             Files.createDirectories(dir);
-            writeGzip(filePath, buildJson(batch, seqFrom, seqTo));
-            log.info("Outbox file written: {}", filePath);
+            byte[] data = buildJson(batch, seqFrom, seqTo);
+            long start = System.nanoTime();
+            writeGzip(filePath, data);
+            long duration = System.nanoTime() - start;
+            long fileSize = Files.size(filePath);
+            log.info("Outbox file written: {} ({} bytes)", filePath, fileSize);
+            if (metrics != null) metrics.recordFileWrite(duration, fileSize);
             return filePath.toString();
         } catch (IOException e) {
             throw new RuntimeException("Outbox file write failed: " + filePath, e);

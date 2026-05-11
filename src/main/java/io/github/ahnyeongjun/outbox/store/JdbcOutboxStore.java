@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import io.github.ahnyeongjun.outbox.model.Outbox;
+import io.github.ahnyeongjun.outbox.observability.OutboxMetrics;
 import io.github.ahnyeongjun.outbox.spi.OutboxStore;
 import lombok.extern.slf4j.Slf4j;
 
@@ -33,6 +34,7 @@ public class JdbcOutboxStore implements OutboxStore {
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final OutboxDialect dialect;
     private final TransactionTemplate tx;
+    private OutboxMetrics metrics;
 
     public JdbcOutboxStore(NamedParameterJdbcTemplate jdbcTemplate,
                             OutboxDialect dialect,
@@ -40,6 +42,10 @@ public class JdbcOutboxStore implements OutboxStore {
         this.jdbcTemplate = jdbcTemplate;
         this.dialect = dialect;
         this.tx = new TransactionTemplate(transactionManager);
+    }
+
+    public void setMetrics(OutboxMetrics metrics) {
+        this.metrics = metrics;
     }
 
     private static final RowMapper<Outbox> ROW_MAPPER = (rs, rowNum) -> {
@@ -92,6 +98,7 @@ public class JdbcOutboxStore implements OutboxStore {
                         handlerError.getMessage(), handlerError);
                 try {
                     batch.forEach(o -> markFailed(o.getId()));
+                    if (metrics != null) metrics.recordFailed(batch.size());
                 } catch (RuntimeException markError) {
                     // markFailed 자체 실패 (DB 일시 장애 등) — tx rollback 시켜 rows 가 PENDING 으로
                     // 남게 함. 다음 폴링에서 재시도 가능.
